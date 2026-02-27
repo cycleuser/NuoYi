@@ -11,6 +11,23 @@ from pathlib import Path
 from typing import Tuple
 
 
+# Supported languages for OCR recognition
+SUPPORTED_LANGUAGES = {
+    "zh": "Chinese / 中文",
+    "en": "English",
+    "ja": "Japanese / 日本語",
+    "fr": "French / Français",
+    "ru": "Russian / Русский",
+    "de": "German / Deutsch",
+    "es": "Spanish / Español",
+    "pt": "Portuguese / Português",
+    "it": "Italian / Italiano",
+    "ko": "Korean / 한국어",
+}
+
+DEFAULT_LANGS = "zh,en"
+
+
 def setup_memory_optimization():
     """Configure PyTorch for better memory management."""
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")

@@ -14,7 +14,7 @@ NuoYi（挪移）使用 [marker-pdf](https://github.com/VikParuchuri/marker) 实
 - **批量处理**：支持整个目录的文档批量转换
 - **图形界面**：基于 PySide6 的图形界面，方便批量转换操作
 - **图片提取**：自动从 PDF 中提取并保存图片
-- **多语言支持**：内置中英文支持（可配置其他语言）
+- **多语言支持**：支持中、英、日、法、俄、德、西、葡、意、韩 10 种语言
 
 ## 安装
 
@@ -119,6 +119,23 @@ docx_converter = DocxConverter()
 markdown_text = docx_converter.convert_file("input.docx")
 ```
 
+## 支持语言
+
+| 代码 | 语言 |
+|------|------|
+| `zh` | 中文 (Chinese) |
+| `en` | 英语 (English) |
+| `ja` | 日语 (Japanese) |
+| `fr` | 法语 (French) |
+| `ru` | 俄语 (Russian) |
+| `de` | 德语 (German) |
+| `es` | 西班牙语 (Spanish) |
+| `pt` | 葡萄牙语 (Portuguese) |
+| `it` | 意大利语 (Italian) |
+| `ko` | 韩语 (Korean) |
+
+使用 `nuoyi --list-langs` 查看完整列表。默认：`zh,en`。
+
 ## 命令行参数
 
 | 参数 | 说明 |
@@ -127,7 +144,8 @@ markdown_text = docx_converter.convert_file("input.docx")
 | `-o, --output` | 输出文件路径（单文件）或目录（批量模式） |
 | `--force-ocr` | 强制 OCR，即使是带有嵌入文本的数字版 PDF |
 | `--page-range` | 要转换的页面范围，如 '0-5,10,15-20' |
-| `--langs` | 逗号分隔的语言列表（默认：zh,en） |
+| `--langs` | 逗号分隔的语言列表（默认：zh,en），使用 `--list-langs` 查看 |
+| `--list-langs` | 列出所有支持的语言并退出 |
 | `--batch` | 处理输入目录中的所有 PDF/DOCX 文件 |
 | `--device` | 模型推理设备：auto（默认）、cpu、cuda 或 mps |
 | `--gui` | 启动 PySide6 图形界面 |

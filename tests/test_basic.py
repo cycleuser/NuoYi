@@ -85,6 +85,22 @@ def test_clean_markdown_citation_links():
     assert result == "(Zhou and Li, 2006; Wang et al., 2008)"
 
 
+def test_supported_languages():
+    """Test that language constants are properly defined."""
+    from nuoyi import SUPPORTED_LANGUAGES, DEFAULT_LANGS
+
+    # Should have exactly 10 languages
+    assert len(SUPPORTED_LANGUAGES) == 10
+
+    # All expected codes present
+    expected_codes = {"zh", "en", "ja", "fr", "ru", "de", "es", "pt", "it", "ko"}
+    assert set(SUPPORTED_LANGUAGES.keys()) == expected_codes
+
+    # DEFAULT_LANGS should be a comma-separated string of valid codes
+    for code in DEFAULT_LANGS.split(","):
+        assert code in SUPPORTED_LANGUAGES
+
+
 def test_select_device_cpu():
     """Test device selection with CPU preference."""
     from nuoyi import select_device

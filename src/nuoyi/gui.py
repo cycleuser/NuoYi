@@ -12,7 +12,7 @@ from .converter import (
     DocxConverter,
     MarkerPDFConverter,
 )
-from .utils import save_images_and_update_markdown
+from .utils import save_images_and_update_markdown, SUPPORTED_LANGUAGES, DEFAULT_LANGS
 
 # --- PySide6 (GUI) ---
 from PySide6.QtWidgets import (
@@ -35,7 +35,7 @@ class MarkerWorker(QThread):
 
     def __init__(self, files: List[Tuple[int, str]], output_dir: str,
                  force_ocr: bool = False, page_range: str = None,
-                 langs: str = "zh,en", device: str = "auto", parent=None):
+                 langs: str = DEFAULT_LANGS, device: str = "auto", parent=None):
         super().__init__(parent)
         self.files = files
         self.output_dir = output_dir
@@ -172,7 +172,7 @@ class MainWindow(QMainWindow):
         out_layout.addWidget(self.browse_out_btn)
         layout.addLayout(out_layout)
 
-        # --- Options ---
+        # --- Options row 1 ---
         opts_layout = QHBoxLayout()
 
         self.force_ocr_cb = QCheckBox("Force OCR")
@@ -187,11 +187,6 @@ class MainWindow(QMainWindow):
         self.page_range_input.setMaximumWidth(150)
         opts_layout.addWidget(self.page_range_input)
 
-        opts_layout.addWidget(QLabel("Languages:"))
-        self.langs_input = QLineEdit("zh,en")
-        self.langs_input.setMaximumWidth(120)
-        opts_layout.addWidget(self.langs_input)
-
         opts_layout.addWidget(QLabel("Device:"))
         self.device_combo = QComboBox()
         self.device_combo.addItems(["auto", "cpu", "cuda"])
@@ -205,6 +200,21 @@ class MainWindow(QMainWindow):
 
         opts_layout.addStretch()
         layout.addLayout(opts_layout)
+
+        # --- Languages ---
+        lang_layout = QHBoxLayout()
+        lang_layout.addWidget(QLabel("Languages:"))
+
+        default_codes = DEFAULT_LANGS.split(",")
+        self.lang_checkboxes = {}
+        for code, name in SUPPORTED_LANGUAGES.items():
+            cb = QCheckBox(f"{code} ({name.split('/')[0].strip()})")
+            cb.setChecked(code in default_codes)
+            self.lang_checkboxes[code] = cb
+            lang_layout.addWidget(cb)
+
+        lang_layout.addStretch()
+        layout.addLayout(lang_layout)
 
         # --- File table ---
         self.table = QTableWidget()
@@ -303,7 +313,8 @@ class MainWindow(QMainWindow):
 
         force_ocr = self.force_ocr_cb.isChecked()
         page_range = self.page_range_input.text().strip() or None
-        langs = self.langs_input.text().strip() or "zh,en"
+        selected = [code for code, cb in self.lang_checkboxes.items() if cb.isChecked()]
+        langs = ",".join(selected) if selected else DEFAULT_LANGS
         device = self.device_combo.currentText()
 
         self.start_btn.setEnabled(False)

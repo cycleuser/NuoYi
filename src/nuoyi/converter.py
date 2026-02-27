@@ -12,6 +12,7 @@ from .utils import (
     clean_markdown,
     select_device,
     setup_memory_optimization,
+    DEFAULT_LANGS,
 )
 
 # Run memory setup early
@@ -38,7 +39,7 @@ class MarkerPDFConverter:
     """
 
     def __init__(self, force_ocr: bool = False, page_range: str = None,
-                 langs: str = "zh,en", device: str = "auto"):
+                 langs: str = DEFAULT_LANGS, device: str = "auto"):
         self.force_ocr = force_ocr
         self.page_range = page_range
         self.langs = langs

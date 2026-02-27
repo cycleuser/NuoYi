@@ -14,7 +14,7 @@ NuoYi uses [marker-pdf](https://github.com/VikParuchuri/marker) for high-quality
 - **Batch Processing**: Convert entire directories of documents
 - **GUI Interface**: PySide6-based graphical interface for easy batch conversion
 - **Image Extraction**: Automatically extracts and saves images from PDFs
-- **Multi-language Support**: Built-in support for Chinese and English (configurable)
+- **Multi-language Support**: 10 languages supported including Chinese, English, Japanese, French, Russian, German, Spanish, Portuguese, Italian, Korean
 
 ## Installation
 
@@ -119,6 +119,23 @@ docx_converter = DocxConverter()
 markdown_text = docx_converter.convert_file("input.docx")
 ```
 
+## Supported Languages
+
+| Code | Language |
+|------|----------|
+| `zh` | Chinese / 中文 |
+| `en` | English |
+| `ja` | Japanese / 日本語 |
+| `fr` | French / Français |
+| `ru` | Russian / Русский |
+| `de` | German / Deutsch |
+| `es` | Spanish / Español |
+| `pt` | Portuguese / Português |
+| `it` | Italian / Italiano |
+| `ko` | Korean / 한국어 |
+
+Use `nuoyi --list-langs` to see the full list. Default: `zh,en`.
+
 ## Command Line Options
 
 | Option | Description |
@@ -127,7 +144,8 @@ markdown_text = docx_converter.convert_file("input.docx")
 | `-o, --output` | Output file path (single file) or directory (batch mode) |
 | `--force-ocr` | Force OCR even for digital PDFs with embedded text |
 | `--page-range` | Page range to convert, e.g. '0-5,10,15-20' |
-| `--langs` | Comma-separated languages (default: zh,en) |
+| `--langs` | Comma-separated languages (default: zh,en). See `--list-langs` |
+| `--list-langs` | List all supported languages and exit |
 | `--batch` | Process all PDF/DOCX files in the input directory |
 | `--device` | Device for model inference: auto (default), cpu, cuda, or mps |
 | `--gui` | Launch PySide6 GUI mode |

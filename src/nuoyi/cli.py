@@ -10,7 +10,7 @@ from .converter import (
     DocxConverter,
     MarkerPDFConverter,
 )
-from .utils import save_images_and_update_markdown
+from .utils import save_images_and_update_markdown, SUPPORTED_LANGUAGES, DEFAULT_LANGS
 
 
 def convert_single_file(input_path: Path, output_path: Path,
@@ -161,9 +161,15 @@ Notes:
         "--page-range",
         help="Page range to convert, e.g. '0-5,10,15-20'",
     )
+    lang_codes = ", ".join(SUPPORTED_LANGUAGES.keys())
     parser.add_argument(
-        "--langs", default="zh,en",
-        help="Comma-separated languages (default: zh,en)",
+        "--langs", default=DEFAULT_LANGS,
+        help=f"Comma-separated languages (default: {DEFAULT_LANGS}). "
+             f"Supported: {lang_codes}",
+    )
+    parser.add_argument(
+        "--list-langs", action="store_true",
+        help="List all supported languages and exit",
     )
     parser.add_argument(
         "--batch", action="store_true",
@@ -189,6 +195,15 @@ Notes:
     if args.version:
         from . import __version__
         print(f"NuoYi version {__version__}")
+        sys.exit(0)
+
+    # --- List languages ---
+    if args.list_langs:
+        print("Supported languages:")
+        for code, name in SUPPORTED_LANGUAGES.items():
+            print(f"  {code:4s}  {name}")
+        print(f"\nDefault: {DEFAULT_LANGS}")
+        print(f"Usage:   nuoyi paper.pdf --langs \"{DEFAULT_LANGS}\"")
         sys.exit(0)
 
     # --- GUI mode ---

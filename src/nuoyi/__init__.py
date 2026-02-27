@@ -21,7 +21,7 @@ Usage:
     text, images = converter.convert_file("input.pdf")
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __author__ = "CycleUser"
 __license__ = "GPL-3.0"
 
@@ -30,6 +30,8 @@ from .converter import (
     MarkerPDFConverter,
 )
 from .utils import (
+    SUPPORTED_LANGUAGES,
+    DEFAULT_LANGS,
     clean_markdown,
     clear_gpu_memory,
     get_gpu_memory_info,
@@ -46,6 +48,9 @@ __all__ = [
     # Converters
     "MarkerPDFConverter",
     "DocxConverter",
+    # Language support
+    "SUPPORTED_LANGUAGES",
+    "DEFAULT_LANGS",
     # Utilities
     "clean_markdown",
     "clear_gpu_memory",
