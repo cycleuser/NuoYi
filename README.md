@@ -85,6 +85,22 @@ The GUI provides:
 - Page range and language configuration
 - Real-time progress and logging
 
+**Startup interface:**
+
+![Startup](images/1-启动界面.png)
+
+**Select input directory:**
+
+![Select directory](images/2-选择路径.png)
+
+**Configure device and options:**
+
+![Configure](images/3-选择模型.png)
+
+**Conversion result (viewed in VS Code):**
+
+![Result](images/4-结果.png)
+
 ### Python API
 
 ```python

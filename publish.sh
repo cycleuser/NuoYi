@@ -11,7 +11,7 @@ cd "$SCRIPT_DIR"
 echo "=== NuoYi PyPI Publisher ==="
 
 # Read version from __init__.py
-VERSION=$(python3 -c "import re; print(re.search(r'__version__\s*=\s*[\"'\''](.*?)[\"'\'']+', open('src/nuoyi/__init__.py').read()).group(1))")
+VERSION=$(grep -oP '__version__\s*=\s*"\K[^"]+' src/nuoyi/__init__.py)
 echo "Version: $VERSION"
 
 # Step 1: Clean old builds

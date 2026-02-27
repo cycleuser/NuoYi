@@ -12,7 +12,7 @@ cd /d "%~dp0"
 echo === NuoYi PyPI Publisher ===
 
 REM Read version
-for /f "delims=" %%v in ('python -c "import re; print(re.search(r'__version__\s*=\s*[\"'](.*?)[\"']+', open('src/nuoyi/__init__.py').read()).group(1))"') do set VERSION=%%v
+for /f "delims=" %%v in ('python -c "exec(open('src/nuoyi/__init__.py').read());print(__version__)"') do set VERSION=%%v
 echo Version: %VERSION%
 
 REM Step 1: Clean
