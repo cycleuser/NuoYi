@@ -1,0 +1,1 @@
+"""NuoYi test suite."""

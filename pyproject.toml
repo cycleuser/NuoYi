@@ -1,0 +1,95 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nuoyi"
+dynamic = ["version"]
+description = "A simple tool to transform PDF and DOCX to Markdown using marker-pdf"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+authors = [
+    { name = "CycleUser", email = "cycleuser@cycleuser.org" }
+]
+keywords = [
+    "pdf",
+    "docx",
+    "markdown",
+    "converter",
+    "ocr",
+    "document",
+    "marker-pdf",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing :: Markup :: Markdown",
+    "Topic :: Utilities",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "marker-pdf>=1.0.0",
+    "PyMuPDF>=1.23.0",
+    "python-docx>=0.8.11",
+    "Pillow>=9.0.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "PySide6>=6.5.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "build>=1.0.0",
+    "twine>=4.0.0",
+]
+all = [
+    "nuoyi[gui,dev]",
+]
+
+[project.scripts]
+nuoyi = "nuoyi.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/cycleuser/NuoYi"
+Documentation = "https://github.com/cycleuser/NuoYi#readme"
+Repository = "https://github.com/cycleuser/NuoYi.git"
+Issues = "https://github.com/cycleuser/NuoYi/issues"
+Changelog = "https://github.com/cycleuser/NuoYi/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/nuoyi/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nuoyi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = ["E501"]

@@ -1,0 +1,23 @@
+# =============================================================================
+# NuoYi (挪移) - PDF/DOCX to Markdown Converter
+# https://github.com/cycleuser/NuoYi
+# =============================================================================
+
+# ── Core dependencies ─────────────────────────────────────────────────────────
+marker-pdf>=1.0.0       # PDF conversion engine (surya OCR + layout detection)
+PyMuPDF>=1.23.0         # PDF page counting and rendering
+python-docx>=0.8.11     # DOCX document conversion
+Pillow>=9.0.0           # Image processing
+
+# ── GUI (optional) ────────────────────────────────────────────────────────────
+# Install with: pip install nuoyi[gui]
+# Or uncomment the line below:
+# PySide6>=6.5.0
+
+# ── Development (optional) ────────────────────────────────────────────────────
+# Install with: pip install nuoyi[dev]
+# Or uncomment the lines below:
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# build>=1.0.0
+# twine>=4.0.0
