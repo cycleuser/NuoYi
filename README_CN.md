@@ -215,6 +215,29 @@ nuoyi paper.pdf
 - 如遇到 CUDA 显存不足错误，请使用 `--device cpu`
 - 不支持旧版 `.doc` 格式，请先转换为 `.docx`
 
+## Agent 集成（OpenAI Function Calling）
+
+NuoYi 提供 OpenAI 兼容的工具定义，可供 LLM Agent 调用：
+
+```python
+from nuoyi.tools import TOOLS, dispatch
+
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=messages,
+    tools=TOOLS,
+)
+
+result = dispatch(
+    tool_call.function.name,
+    tool_call.function.arguments,
+)
+```
+
+## CLI 帮助
+
+![CLI 帮助](images/nuoyi_help.png)
+
 ## 开源协议
 
 GPL-3.0 协议 - 详见 [LICENSE](LICENSE) 文件。

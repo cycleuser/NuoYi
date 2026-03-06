@@ -40,6 +40,8 @@ from .utils import (
     setup_memory_optimization,
 )
 
+from .api import ToolResult, convert_file as api_convert_file, convert_directory as api_convert_directory
+
 __all__ = [
     # Version info
     "__version__",
@@ -48,6 +50,10 @@ __all__ = [
     # Converters
     "MarkerPDFConverter",
     "DocxConverter",
+    # API
+    "ToolResult",
+    "api_convert_file",
+    "api_convert_directory",
     # Language support
     "SUPPORTED_LANGUAGES",
     "DEFAULT_LANGS",

@@ -1,0 +1,46 @@
+usage: nuoyi [-h] [-o OUTPUT] [--force-ocr] [--page-range PAGE_RANGE]
+             [--langs LANGS] [--list-langs] [--batch]
+             [--device {auto,cpu,cuda,mps}] [--gui] [-V] [-v] [--json] [-q]
+             [input]
+
+NuoYi - Convert PDF/DOCX to Markdown using marker-pdf (offline)
+
+positional arguments:
+  input                 Input PDF/DOCX file or directory (with --batch)
+
+options:
+  -h, --help            show this help message and exit
+  -o OUTPUT, --output OUTPUT
+                        Output file path (single file) or directory (batch
+                        mode)
+  --force-ocr           Force OCR even for digital PDFs with embedded text
+  --page-range PAGE_RANGE
+                        Page range to convert, e.g. '0-5,10,15-20'
+  --langs LANGS         Comma-separated languages (default: zh,en). Supported:
+                        zh, en, ja, fr, ru, de, es, pt, it, ko
+  --list-langs          List all supported languages and exit
+  --batch               Process all PDF/DOCX files in the input directory
+  --device {auto,cpu,cuda,mps}
+                        Device for model inference: auto (default), cpu, cuda,
+                        or mps
+  --gui                 Launch PySide6 GUI mode
+  -V, --version         show program's version number and exit
+  -v, --verbose         Verbose output
+  --json                Output results as JSON
+  -q, --quiet           Suppress non-essential output
+
+Examples:
+  nuoyi paper.pdf                        # Single file
+  nuoyi paper.pdf -o output/result.md    # Custom output
+  nuoyi ./papers --batch                 # Batch directory
+  nuoyi ./papers --batch -o ./output     # Batch with output dir
+  nuoyi paper.pdf --device cpu           # Force CPU (low VRAM)
+  nuoyi --gui                            # Launch GUI
+
+Notes:
+  marker-pdf models (~2-3 GB) are downloaded automatically on first run.
+  After that, everything works fully offline.
+
+  Use --device cpu if you encounter CUDA out of memory errors.
+  The 'auto' mode (default) will detect GPU memory and fall back to CPU if needed.
+        

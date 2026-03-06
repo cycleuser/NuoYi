@@ -215,6 +215,29 @@ The current version does not support custom model paths to keep the tool simple 
 - Use `--device cpu` if you encounter CUDA out of memory errors
 - Legacy `.doc` format is not supported; convert to `.docx` first
 
+## Agent Integration (OpenAI Function Calling)
+
+NuoYi exposes OpenAI-compatible tools for LLM agents:
+
+```python
+from nuoyi.tools import TOOLS, dispatch
+
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=messages,
+    tools=TOOLS,
+)
+
+result = dispatch(
+    tool_call.function.name,
+    tool_call.function.arguments,
+)
+```
+
+## CLI Help
+
+![CLI Help](images/nuoyi_help.png)
+
 ## License
 
 GPL-3.0 License - see [LICENSE](LICENSE) for details.

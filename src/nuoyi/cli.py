@@ -11,6 +11,7 @@ from .converter import (
     MarkerPDFConverter,
 )
 from .utils import save_images_and_update_markdown, SUPPORTED_LANGUAGES, DEFAULT_LANGS
+from . import __version__
 
 
 def convert_single_file(input_path: Path, output_path: Path,
@@ -185,17 +186,28 @@ Notes:
         help="Launch PySide6 GUI mode",
     )
     parser.add_argument(
-        "-V", "--version", action="store_true",
-        help="Show version and exit",
+        "-V", "--version",
+        action="version",
+        version=f"NuoYi {__version__}",
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Verbose output",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output results as JSON",
+    )
+    parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Suppress non-essential output",
     )
 
     args = parser.parse_args()
-
-    # --- Version ---
-    if args.version:
-        from . import __version__
-        print(f"NuoYi version {__version__}")
-        sys.exit(0)
 
     # --- List languages ---
     if args.list_langs:
