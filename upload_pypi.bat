@@ -3,7 +3,7 @@ REM NuoYi - Build and upload to PyPI
 setlocal
 cd /d "%~dp0"
 
-set "PYTHON=C:\Miniconda3\envs\dev\python.exe"
+if not defined PYTHON set "PYTHON=python"
 set "VERSION_FILE=src\nuoyi\__init__.py"
 
 echo === NuoYi PyPI Upload ===
