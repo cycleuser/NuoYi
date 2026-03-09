@@ -21,7 +21,7 @@ Usage:
     text, images = converter.convert_file("input.pdf")
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 __author__ = "CycleUser"
 __license__ = "GPL-3.0"
 
