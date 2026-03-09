@@ -28,7 +28,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -36,7 +35,7 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: Markdown",
     "Topic :: Utilities",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "marker-pdf>=1.0.0",
     "PyMuPDF>=1.23.0",

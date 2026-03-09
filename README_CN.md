@@ -18,6 +18,8 @@ NuoYi（挪移）使用 [marker-pdf](https://github.com/VikParuchuri/marker) 实
 
 ## 安装
 
+**需要 Python 3.10 或更高版本**（marker-pdf 要求 Python >= 3.10）。
+
 ### 从 PyPI 安装
 
 ```bash
@@ -36,6 +38,17 @@ pip install nuoyi[gui]
 git clone https://github.com/cycleuser/NuoYi.git
 cd NuoYi
 pip install -e .
+```
+
+### macOS 安装说明
+
+marker-pdf 完全支持 macOS（Intel 和 Apple Silicon 均可）。macOS 上 PyTorch 会自动安装为无 CUDA 版本。Apple Silicon Mac 可以通过 `--device mps` 使用 MPS 加速。
+
+如果在 macOS 上遇到 torch 安装问题，请先安装 CPU 版本的 PyTorch：
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install nuoyi
 ```
 
 ## 使用方法
