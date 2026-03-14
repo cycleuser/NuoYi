@@ -15,6 +15,7 @@ from typing import Any, Optional
 @dataclass
 class ToolResult:
     """Standardised return type for all NuoYi API functions."""
+
     success: bool
     data: Any = None
     error: Optional[str] = None
@@ -53,7 +54,7 @@ def convert_file(
     langs : str
         Comma-separated language codes.
     device : str
-        Compute device: auto, cpu, cuda, or mps.
+        Compute device: auto, cuda, rocm, mps, mlx, or cpu.
 
     Returns
     -------
@@ -78,7 +79,7 @@ def convert_file(
 
     try:
         from . import __version__
-        from .converter import MarkerPDFConverter, DocxConverter
+        from .converter import DocxConverter, MarkerPDFConverter
         from .utils import save_images_and_update_markdown
 
         images = {}
@@ -97,9 +98,7 @@ def convert_file(
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         if images:
-            content = save_images_and_update_markdown(
-                content, images, output_path.parent, "images"
-            )
+            content = save_images_and_update_markdown(content, images, output_path.parent, "images")
 
         output_path.write_text(content, encoding="utf-8")
 
@@ -144,7 +143,7 @@ def convert_directory(
     langs : str
         Comma-separated language codes.
     device : str
-        Compute device: auto, cpu, cuda, or mps.
+        Compute device: auto, cuda, rocm, mps, mlx, or cpu.
 
     Returns
     -------
@@ -184,12 +183,14 @@ def convert_directory(
             langs=langs,
             device=device,
         )
-        results.append({
-            "file": f.name,
-            "success": r.success,
-            "output": str(out_path) if r.success else None,
-            "error": r.error,
-        })
+        results.append(
+            {
+                "file": f.name,
+                "success": r.success,
+                "output": str(out_path) if r.success else None,
+                "error": r.error,
+            }
+        )
         if r.success:
             success_count += 1
         else:

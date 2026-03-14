@@ -8,21 +8,33 @@ import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from PySide6.QtCore import Qt, QThread, Signal
+
+# --- PySide6 (GUI) ---
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
 from .converter import (
     DocxConverter,
     MarkerPDFConverter,
 )
-from .utils import save_images_and_update_markdown, SUPPORTED_LANGUAGES, DEFAULT_LANGS
-
-# --- PySide6 (GUI) ---
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTableWidget, QTableWidgetItem, QHeaderView,
-    QFileDialog, QMessageBox, QTextEdit, QCheckBox,
-    QComboBox,
-)
-from PySide6.QtCore import Qt, QThread, Signal
+from .utils import DEFAULT_LANGS, SUPPORTED_LANGUAGES, save_images_and_update_markdown
 
 
 class MarkerWorker(QThread):
@@ -97,14 +109,14 @@ class MarkerWorker(QThread):
 
                 base_name = Path(filepath).stem
                 out_path = os.path.join(self.output_dir, f"{base_name}.md")
-                
+
                 if images:
                     images_subdir = f"{base_name}_images"
                     content = save_images_and_update_markdown(
                         content, images, Path(self.output_dir), images_subdir
                     )
                     self.log_signal.emit(f"[{filename}] Saved {len(images)} images")
-                
+
                 with open(out_path, "w", encoding="utf-8") as f:
                     f.write(content)
 

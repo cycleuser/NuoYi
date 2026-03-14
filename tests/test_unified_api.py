@@ -7,7 +7,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -151,6 +150,6 @@ class TestPackageExports:
         assert callable(ToolResult)
 
     def test_converters(self):
-        from nuoyi import MarkerPDFConverter, DocxConverter
+        from nuoyi import DocxConverter, MarkerPDFConverter
         assert MarkerPDFConverter is not None
         assert DocxConverter is not None

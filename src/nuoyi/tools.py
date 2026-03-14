@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .utils import SUPPORTED_DEVICES
+
 TOOLS = [
     {
         "type": "function",
@@ -46,8 +48,12 @@ TOOLS = [
                     },
                     "device": {
                         "type": "string",
-                        "enum": ["auto", "cpu", "cuda", "mps"],
-                        "description": "Compute device for model inference.",
+                        "enum": SUPPORTED_DEVICES,
+                        "description": (
+                            "Compute device for model inference. "
+                            "Options: auto, cuda (NVIDIA), rocm (AMD), "
+                            "mps (Apple Metal), mlx (Apple MLX), cpu."
+                        ),
                         "default": "auto",
                     },
                 },
@@ -60,8 +66,7 @@ TOOLS = [
         "function": {
             "name": "nuoyi_convert_directory",
             "description": (
-                "Batch-convert all PDF and DOCX files in a directory "
-                "to Markdown files."
+                "Batch-convert all PDF and DOCX files in a directory to Markdown files."
             ),
             "parameters": {
                 "type": "object",
@@ -86,8 +91,12 @@ TOOLS = [
                     },
                     "device": {
                         "type": "string",
-                        "enum": ["auto", "cpu", "cuda", "mps"],
-                        "description": "Compute device.",
+                        "enum": SUPPORTED_DEVICES,
+                        "description": (
+                            "Compute device for model inference. "
+                            "Options: auto, cuda (NVIDIA), rocm (AMD), "
+                            "mps (Apple Metal), mlx (Apple MLX), cpu."
+                        ),
                         "default": "auto",
                     },
                 },

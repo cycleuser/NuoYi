@@ -2,33 +2,46 @@
 NuoYi - Document converters for PDF and DOCX to Markdown.
 
 Supports marker-pdf for PDF conversion and python-docx for DOCX.
+
+Acceleration backends:
+- CUDA: NVIDIA GPUs
+- ROCm: AMD GPUs (via HIP, uses CUDA interface)
+- MPS: Apple Silicon Metal Performance Shaders
+- MLX: Apple MLX framework (experimental, may need surya-mlx)
+- CPU: Universal fallback
 """
 
+import gc
 import os
 from typing import Tuple
 
 from .utils import (
-    clear_gpu_memory,
+    DEFAULT_LANGS,
     clean_markdown,
+    clear_gpu_memory,
+    clear_mlx_memory,
     select_device,
     setup_memory_optimization,
-    DEFAULT_LANGS,
 )
 
-# Run memory setup early
 setup_memory_optimization()
 
-# --- PyMuPDF (for page counting) ---
 import fitz
-
-# --- marker-pdf (primary conversion engine) ---
+from docx import Document
+from marker.config.parser import ConfigParser
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
 from marker.output import text_from_rendered
-from marker.config.parser import ConfigParser
 
-# --- python-docx (DOCX support) ---
-from docx import Document
+
+def _is_gpu_device(device: str) -> bool:
+    """Check if device is a GPU type that can experience OOM."""
+    return device in ("cuda", "rocm", "mps")
+
+
+def _is_mlx_device(device: str) -> bool:
+    """Check if device is MLX."""
+    return device == "mlx"
 
 
 class MarkerPDFConverter:
@@ -36,41 +49,71 @@ class MarkerPDFConverter:
 
     Models are loaded once and reused across multiple files.
     Automatically handles GPU memory issues with CPU fallback.
+
+    Supported devices:
+    - cuda: NVIDIA GPUs
+    - rocm: AMD GPUs (uses CUDA interface internally)
+    - mps: Apple Silicon Metal
+    - mlx: Apple MLX framework (experimental)
+    - cpu: Universal fallback
     """
 
-    def __init__(self, force_ocr: bool = False, page_range: str = None,
-                 langs: str = DEFAULT_LANGS, device: str = "auto"):
+    def __init__(
+        self,
+        force_ocr: bool = False,
+        page_range: str | None = None,
+        langs: str = DEFAULT_LANGS,
+        device: str = "auto",
+    ):
         self.force_ocr = force_ocr
         self.page_range = page_range
         self.langs = langs
 
-        # Select device with automatic fallback
         self.device = select_device(device)
+        self._setup_device_environment()
+        self._build_and_load_models()
 
-        # Set environment variable for marker-pdf/torch
-        os.environ["TORCH_DEVICE"] = self.device
+    def _setup_device_environment(self):
+        """Set up environment variables for the selected device."""
+        if _is_mlx_device(self.device):
+            os.environ["MLX_DEVICE"] = "gpu"
+        else:
+            os.environ["TORCH_DEVICE"] = self.device
 
-        # Build config
+    def _build_config(self) -> dict:
+        """Build configuration dict for marker-pdf."""
         config = {"output_format": "markdown"}
-        if force_ocr:
+        if self.force_ocr:
             config["force_ocr"] = True
-        if page_range:
-            config["page_range"] = page_range
-        if langs:
-            config["languages"] = langs
+        if self.page_range:
+            config["page_range"] = self.page_range
+        if self.langs:
+            config["languages"] = self.langs
+        return config
 
+    def _build_and_load_models(self):
+        """Build config parser and load models."""
+        config = self._build_config()
         config_parser = ConfigParser(config)
-
-        # Try to load models, with CPU fallback on OOM
         self._load_models_with_fallback(config_parser)
 
     def _load_models_with_fallback(self, config_parser):
-        """Load marker-pdf models with automatic CPU fallback on CUDA OOM."""
-        print(f"Loading marker-pdf models on {self.device.upper()}...")
+        """Load marker-pdf models with automatic CPU fallback on OOM."""
+        device_display = self.device.upper()
+        if self.device == "cuda" and _is_rocm_runtime():
+            device_display = "ROCm"
+        elif self.device == "mps":
+            device_display = "MPS (Apple Metal)"
+        elif self.device == "mlx":
+            device_display = "MLX (Apple Silicon)"
+        elif self.device == "cpu":
+            device_display = "CPU"
+
+        print(f"Loading marker-pdf models on {device_display}...")
         print("(First run downloads ~2-3 GB of model weights)")
 
         try:
-            clear_gpu_memory()
+            self._clear_device_memory()
             self.artifact_dict = create_model_dict()
             self.converter = PdfConverter(
                 config=config_parser.generate_config_dict(),
@@ -78,85 +121,135 @@ class MarkerPDFConverter:
                 processor_list=config_parser.get_processors(),
                 renderer=config_parser.get_renderer(),
             )
-            print(f"Models loaded successfully on {self.device.upper()}.")
+            print(f"Models loaded successfully on {device_display}.")
 
         except RuntimeError as e:
-            error_msg = str(e).lower()
-            if "cuda" in error_msg and ("out of memory" in error_msg or "oom" in error_msg):
-                if self.device != "cpu":
-                    print(f"\n[WARNING] CUDA out of memory! Falling back to CPU...")
-                    print("[WARNING] This will be slower but avoids memory issues.\n")
+            self._handle_load_error(e, config_parser)
+        except MemoryError:
+            self._handle_memory_error(config_parser)
 
-                    # Clean up GPU memory
-                    clear_gpu_memory()
-                    self.artifact_dict = None
-                    self.converter = None
+    def _handle_load_error(self, error: RuntimeError, config_parser):
+        """Handle RuntimeError during model loading (e.g., CUDA OOM)."""
+        error_msg = str(error).lower()
+        is_oom = "out of memory" in error_msg or "oom" in error_msg
 
-                    # Switch to CPU
-                    self.device = "cpu"
-                    os.environ["TORCH_DEVICE"] = "cpu"
+        if not is_oom:
+            raise error
 
-                    # Retry on CPU
-                    print("Reloading models on CPU...")
-                    self.artifact_dict = create_model_dict()
-                    self.converter = PdfConverter(
-                        config=config_parser.generate_config_dict(),
-                        artifact_dict=self.artifact_dict,
-                        processor_list=config_parser.get_processors(),
-                        renderer=config_parser.get_renderer(),
-                    )
-                    print("Models loaded successfully on CPU.")
-                else:
-                    raise
-            else:
-                raise
+        if _is_gpu_device(self.device):
+            print(f"\n[WARNING] {self.device.upper()} out of memory! Falling back to CPU...")
+            print("[WARNING] This will be slower but avoids memory issues.\n")
+
+            self._clear_device_memory()
+            self.artifact_dict = None
+            self.converter = None
+
+            self.device = "cpu"
+            os.environ["TORCH_DEVICE"] = "cpu"
+            del os.environ["MLX_DEVICE"]
+
+            print("Reloading models on CPU...")
+            self.artifact_dict = create_model_dict()
+            self.converter = PdfConverter(
+                config=config_parser.generate_config_dict(),
+                artifact_dict=self.artifact_dict,
+                processor_list=config_parser.get_processors(),
+                renderer=config_parser.get_renderer(),
+            )
+            print("Models loaded successfully on CPU.")
+        else:
+            raise error
+
+    def _handle_memory_error(self, config_parser):
+        """Handle MemoryError by falling back to CPU."""
+        print("\n[WARNING] Memory error! Falling back to CPU...")
+
+        self._clear_device_memory()
+        self.device = "cpu"
+        os.environ["TORCH_DEVICE"] = "cpu"
+        if "MLX_DEVICE" in os.environ:
+            del os.environ["MLX_DEVICE"]
+
+        self.artifact_dict = create_model_dict()
+        self.converter = PdfConverter(
+            config=config_parser.generate_config_dict(),
+            artifact_dict=self.artifact_dict,
+            processor_list=config_parser.get_processors(),
+            renderer=config_parser.get_renderer(),
+        )
+        print("Models loaded successfully on CPU.")
+
+    def _clear_device_memory(self):
+        """Clear memory for the current device."""
+        if _is_mlx_device(self.device):
+            clear_mlx_memory()
+        else:
+            clear_gpu_memory()
+        self._force_gc()
+
+    @staticmethod
+    def _force_gc():
+        """Force garbage collection."""
+        gc.collect()
 
     def convert_file(self, pdf_path: str) -> Tuple[str, dict]:
         """Convert a single PDF file to Markdown text and extract images.
-        
+
         Returns:
             Tuple of (markdown_text, images_dict) where images_dict maps
             image filenames to PIL Image objects or base64 data.
         """
         try:
-            clear_gpu_memory()
+            self._clear_device_memory()
             rendered = self.converter(pdf_path)
             text, _, images = text_from_rendered(rendered)
             return clean_markdown(text), images or {}
 
         except RuntimeError as e:
-            error_msg = str(e).lower()
-            if "cuda" in error_msg and ("out of memory" in error_msg or "oom" in error_msg):
-                if self.device != "cpu":
-                    print(f"\n[WARNING] CUDA OOM during conversion! Retrying on CPU...")
-                    clear_gpu_memory()
+            return self._handle_conversion_error(e, pdf_path)
+        except MemoryError:
+            return self._retry_on_cpu(pdf_path)
 
-                    # Rebuild converter on CPU
-                    self.device = "cpu"
-                    os.environ["TORCH_DEVICE"] = "cpu"
+    def _handle_conversion_error(self, error: RuntimeError, pdf_path: str):
+        """Handle RuntimeError during conversion."""
+        error_msg = str(error).lower()
+        is_oom = "out of memory" in error_msg or "oom" in error_msg
 
-                    config = {"output_format": "markdown"}
-                    if self.force_ocr:
-                        config["force_ocr"] = True
-                    if self.page_range:
-                        config["page_range"] = self.page_range
-                    if self.langs:
-                        config["languages"] = self.langs
+        if not is_oom:
+            raise error
 
-                    config_parser = ConfigParser(config)
-                    self.artifact_dict = create_model_dict()
-                    self.converter = PdfConverter(
-                        config=config_parser.generate_config_dict(),
-                        artifact_dict=self.artifact_dict,
-                        processor_list=config_parser.get_processors(),
-                        renderer=config_parser.get_renderer(),
-                    )
+        if _is_gpu_device(self.device):
+            print(f"\n[WARNING] {self.device.upper()} OOM during conversion! Retrying on CPU...")
+            return self._retry_on_cpu(pdf_path)
+        raise error
 
-                    # Retry conversion
-                    rendered = self.converter(pdf_path)
-                    text, _, images = text_from_rendered(rendered)
-                    return clean_markdown(text), images or {}
-            raise
+    def _retry_on_cpu(self, pdf_path: str) -> Tuple[str, dict]:
+        """Retry conversion on CPU after GPU failure."""
+        self._clear_device_memory()
+
+        self.device = "cpu"
+        os.environ["TORCH_DEVICE"] = "cpu"
+        if "MLX_DEVICE" in os.environ:
+            del os.environ["MLX_DEVICE"]
+
+        self._rebuild_converter()
+
+        rendered = self.converter(pdf_path)
+        text, _, images = text_from_rendered(rendered)
+        return clean_markdown(text), images or {}
+
+    def _rebuild_converter(self):
+        """Rebuild the converter for the current device."""
+        config = self._build_config()
+        config_parser = ConfigParser(config)
+
+        self.artifact_dict = create_model_dict()
+        self.converter = PdfConverter(
+            config=config_parser.generate_config_dict(),
+            artifact_dict=self.artifact_dict,
+            processor_list=config_parser.get_processors(),
+            renderer=config_parser.get_renderer(),
+        )
 
     @staticmethod
     def get_page_count(pdf_path: str) -> int:
@@ -168,6 +261,16 @@ class MarkerPDFConverter:
             return count
         except Exception:
             return 0
+
+
+def _is_rocm_runtime() -> bool:
+    """Check if current CUDA runtime is actually ROCm/HIP."""
+    try:
+        import torch
+
+        return hasattr(torch.version, "hip") and torch.version.hip is not None
+    except Exception:
+        return False
 
 
 class DocxConverter:
@@ -244,6 +347,6 @@ class DocxConverter:
         for row in rows[1:]:
             while len(row) < len(rows[0]):
                 row.append("")
-            lines.append("| " + " | ".join(row[:len(rows[0])]) + " |")
+            lines.append("| " + " | ".join(row[: len(rows[0])]) + " |")
 
         return "\n".join(lines)
