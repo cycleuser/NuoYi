@@ -127,6 +127,7 @@ def convert_directory(
     page_range: str | None = None,
     langs: str = "zh,en",
     device: str = "auto",
+    recursive: bool = False,
 ) -> ToolResult:
     """Batch-convert all PDF/DOCX files in a directory.
 
@@ -144,6 +145,8 @@ def convert_directory(
         Comma-separated language codes.
     device : str
         Compute device: auto, cuda, rocm, mps, mlx, or cpu.
+    recursive : bool
+        If True, search subdirectories recursively.
 
     Returns
     -------
@@ -159,14 +162,15 @@ def convert_directory(
     else:
         output_dir = Path(output_dir)
 
-    exts = (".pdf", ".docx")
-    files = sorted(f for f in input_dir.iterdir() if f.suffix.lower() in exts)
+    from .utils import find_documents
+
+    files = find_documents(input_dir, recursive=recursive)
 
     if not files:
         return ToolResult(
             success=True,
             data={"files": [], "success": 0, "failed": 0},
-            metadata={"input_dir": str(input_dir)},
+            metadata={"input_dir": str(input_dir), "recursive": recursive},
         )
 
     results = []
@@ -209,6 +213,7 @@ def convert_directory(
             "input_dir": str(input_dir.resolve()),
             "output_dir": str(output_dir.resolve()),
             "total": len(files),
+            "recursive": recursive,
             "version": __version__,
         },
     )

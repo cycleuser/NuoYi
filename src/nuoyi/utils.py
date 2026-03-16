@@ -462,3 +462,97 @@ def save_images_and_update_markdown(
                 updated_text = updated_text.replace(old_ref, new_ref)
 
     return updated_text
+
+
+def find_pdf_files(
+    directory: Path,
+    recursive: bool = False,
+) -> list[Path]:
+    """Find all PDF files in a directory.
+
+    Args:
+        directory: Directory to search
+        recursive: If True, search subdirectories recursively
+
+    Returns:
+        List of PDF file paths, sorted
+    """
+    pattern = "**/*.pdf" if recursive else "*.pdf"
+    return sorted(directory.glob(pattern))
+
+
+def find_docx_files(
+    directory: Path,
+    recursive: bool = False,
+) -> list[Path]:
+    """Find all DOCX files in a directory.
+
+    Args:
+        directory: Directory to search
+        recursive: If True, search subdirectories recursively
+
+    Returns:
+        List of DOCX file paths, sorted
+    """
+    pattern = "**/*.docx" if recursive else "*.docx"
+    return sorted(directory.glob(pattern))
+
+
+def find_documents(
+    directory: Path,
+    recursive: bool = False,
+    extensions: tuple[str, ...] = (".pdf", ".docx"),
+) -> list[Path]:
+    """Find all PDF and DOCX files in a directory.
+
+    Args:
+        directory: Directory to search
+        recursive: If True, search subdirectories recursively
+        extensions: Tuple of file extensions to search for
+
+    Returns:
+        List of document file paths, sorted
+    """
+    files = []
+    if recursive:
+        for ext in extensions:
+            files.extend(directory.glob(f"**/*{ext}"))
+    else:
+        for ext in extensions:
+            files.extend(directory.glob(f"*{ext}"))
+    return sorted(files)
+
+
+def scan_directory(
+    directory: Path,
+    recursive: bool = False,
+) -> dict:
+    """Scan a directory for PDF and DOCX files.
+
+    Args:
+        directory: Directory to scan
+        recursive: If True, scan subdirectories recursively
+
+    Returns:
+        Dictionary with 'pdf_files', 'docx_files', 'total_files', and 'subdirs'
+    """
+    pdf_files = find_pdf_files(directory, recursive)
+    docx_files = find_docx_files(directory, recursive)
+
+    result = {
+        "pdf_files": pdf_files,
+        "docx_files": docx_files,
+        "total_files": len(pdf_files) + len(docx_files),
+        "subdirs": [],
+    }
+
+    if recursive:
+        # Find all subdirectories that contain documents
+        for ext in (".pdf", ".docx"):
+            for file in directory.glob(f"**/*{ext}"):
+                subdir = file.parent.relative_to(directory)
+                if subdir != Path(".") and str(subdir) not in result["subdirs"]:
+                    result["subdirs"].append(str(subdir))
+        result["subdirs"].sort()
+
+    return result

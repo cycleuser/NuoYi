@@ -34,20 +34,32 @@ from .converter import (
     DocxConverter,
     MarkerPDFConverter,
 )
-from .utils import DEFAULT_LANGS, SUPPORTED_LANGUAGES, save_images_and_update_markdown
+from .utils import (
+    DEFAULT_LANGS,
+    SUPPORTED_LANGUAGES,
+    find_documents,
+    save_images_and_update_markdown,
+)
 
 
 class MarkerWorker(QThread):
     """Background worker for batch file processing."""
 
-    progress_signal = Signal(int, int)   # row, progress percentage
-    status_signal = Signal(int, str)     # row, status message
-    log_signal = Signal(str)             # log message
+    progress_signal = Signal(int, int)  # row, progress percentage
+    status_signal = Signal(int, str)  # row, status message
+    log_signal = Signal(str)  # log message
     finished_signal = Signal()
 
-    def __init__(self, files: List[Tuple[int, str]], output_dir: str,
-                 force_ocr: bool = False, page_range: str = None,
-                 langs: str = DEFAULT_LANGS, device: str = "auto", parent=None):
+    def __init__(
+        self,
+        files: List[Tuple[int, str]],
+        output_dir: str,
+        force_ocr: bool = False,
+        page_range: str = None,
+        langs: str = DEFAULT_LANGS,
+        device: str = "auto",
+        parent=None,
+    ):
         super().__init__(parent)
         self.files = files
         self.output_dir = output_dir
@@ -58,9 +70,7 @@ class MarkerWorker(QThread):
         self.is_running = True
 
     def run(self):
-        self.log_signal.emit(
-            f"Starting processing of {len(self.files)} files..."
-        )
+        self.log_signal.emit(f"Starting processing of {len(self.files)} files...")
 
         pdf_converter = None
         docx_converter = None
@@ -77,9 +87,7 @@ class MarkerWorker(QThread):
                 )
                 self.log_signal.emit(f"Models loaded on {pdf_converter.device.upper()}.")
         except Exception as e:
-            self.log_signal.emit(
-                f"Failed to load marker-pdf: {e}. PDF files will be skipped."
-            )
+            self.log_signal.emit(f"Failed to load marker-pdf: {e}. PDF files will be skipped.")
 
         if any(fp.lower().endswith(".docx") for _, fp in self.files):
             docx_converter = DocxConverter()
@@ -122,9 +130,7 @@ class MarkerWorker(QThread):
 
                 self.status_signal.emit(index, "Completed")
                 self.progress_signal.emit(index, 100)
-                self.log_signal.emit(
-                    f"[{filename}] Done -> {os.path.basename(out_path)}"
-                )
+                self.log_signal.emit(f"[{filename}] Done -> {os.path.basename(out_path)}")
 
             except Exception as e:
                 self.status_signal.emit(index, "Error")
@@ -159,9 +165,7 @@ class MainWindow(QMainWindow):
         in_label = QLabel("Input Directory:")
         self.in_dir_input = QLineEdit()
         self.in_dir_input.setReadOnly(True)
-        self.in_dir_input.setPlaceholderText(
-            "Select a directory containing PDF/DOCX files"
-        )
+        self.in_dir_input.setPlaceholderText("Select a directory containing PDF/DOCX files")
         self.browse_in_btn = QPushButton("Browse")
         self.browse_in_btn.clicked.connect(self.browse_input_directory)
         in_layout.addWidget(in_label)
@@ -174,9 +178,7 @@ class MainWindow(QMainWindow):
         out_label = QLabel("Output Directory:")
         self.out_dir_input = QLineEdit()
         self.out_dir_input.setReadOnly(True)
-        self.out_dir_input.setPlaceholderText(
-            "Same as input (default)"
-        )
+        self.out_dir_input.setPlaceholderText("Same as input (default)")
         self.browse_out_btn = QPushButton("Browse")
         self.browse_out_btn.clicked.connect(self.browse_output_directory)
         out_layout.addWidget(out_label)
@@ -188,10 +190,13 @@ class MainWindow(QMainWindow):
         opts_layout = QHBoxLayout()
 
         self.force_ocr_cb = QCheckBox("Force OCR")
-        self.force_ocr_cb.setToolTip(
-            "Force OCR even for digital PDFs with embedded text"
-        )
+        self.force_ocr_cb.setToolTip("Force OCR even for digital PDFs with embedded text")
         opts_layout.addWidget(self.force_ocr_cb)
+
+        self.recursive_cb = QCheckBox("Recursive (include subdirectories)")
+        self.recursive_cb.setToolTip("Scan all subdirectories for PDF/DOCX files")
+        self.recursive_cb.setChecked(False)
+        opts_layout.addWidget(self.recursive_cb)
 
         opts_layout.addWidget(QLabel("Page Range:"))
         self.page_range_input = QLineEdit()
@@ -231,18 +236,10 @@ class MainWindow(QMainWindow):
         # --- File table ---
         self.table = QTableWidget()
         self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(
-            ["Filename", "Status", "Progress"]
-        )
-        self.table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.Stretch
-        )
-        self.table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeToContents
-        )
-        self.table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.Fixed
-        )
+        self.table.setHorizontalHeaderLabels(["Filename", "Status", "Progress"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
         self.table.setColumnWidth(2, 100)
         layout.addWidget(self.table)
 
@@ -251,8 +248,7 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self.start_processing)
         self.start_btn.setEnabled(False)
         self.start_btn.setStyleSheet(
-            "background-color: #4CAF50; color: white; "
-            "font-weight: bold; padding: 10px;"
+            "background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;"
         )
         layout.addWidget(self.start_btn)
 
@@ -264,17 +260,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log_area)
 
     def browse_input_directory(self):
-        directory = QFileDialog.getExistingDirectory(
-            self, "Select Input Directory"
-        )
+        directory = QFileDialog.getExistingDirectory(self, "Select Input Directory")
         if directory:
             self.in_dir_input.setText(directory)
             self.scan_directory(directory)
 
     def browse_output_directory(self):
-        directory = QFileDialog.getExistingDirectory(
-            self, "Select Output Directory"
-        )
+        directory = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if directory:
             self.out_dir_input.setText(directory)
 
@@ -283,44 +275,52 @@ class MainWindow(QMainWindow):
         self.files_to_process = []
 
         try:
-            exts = ('.pdf', '.docx')
-            files = sorted(
-                f for f in os.listdir(directory)
-                if f.lower().endswith(exts)
-            )
+            recursive = self.recursive_cb.isChecked()
+
+            # Use find_documents for both recursive and non-recursive scanning
+            files = find_documents(Path(directory), recursive=recursive)
+
             if not files:
                 QMessageBox.information(
-                    self, "No Files Found",
-                    "No PDF or DOCX files found in the selected directory."
+                    self, "No Files Found", "No PDF or DOCX files found in the selected directory."
                 )
                 self.start_btn.setEnabled(False)
                 return
 
             self.table.setRowCount(len(files))
-            for i, filename in enumerate(files):
-                filepath = os.path.join(directory, filename)
-                self.files_to_process.append((i, filepath))
+            for i, filepath in enumerate(files):
+                self.files_to_process.append((i, str(filepath)))
+
+                filename = filepath.name
+                if recursive:
+                    # Show relative path for recursive scan
+                    try:
+                        rel_path = filepath.relative_to(Path(directory))
+                        filename = str(rel_path)
+                    except ValueError:
+                        pass
 
                 self.table.setItem(i, 0, QTableWidgetItem(filename))
                 self.table.setItem(i, 1, QTableWidgetItem("Pending"))
                 self.table.setItem(i, 2, QTableWidgetItem("0%"))
 
             self.start_btn.setEnabled(True)
-            self.log(f"Found {len(files)} files in {directory}")
+
+            if recursive:
+                subdirs = set(f.parent for f in files)
+                self.log(f"Found {len(files)} files in {len(subdirs)} subdirectories")
+            else:
+                self.log(f"Found {len(files)} files in {directory}")
 
         except Exception as e:
-            QMessageBox.critical(
-                self, "Error", f"Failed to scan directory: {e}"
-            )
+            QMessageBox.critical(self, "Error", f"Failed to scan directory: {e}")
 
     def start_processing(self):
         output_dir = self.out_dir_input.text().strip()
         if not output_dir:
             output_dir = self.in_dir_input.text().strip()
         if not output_dir:
-            QMessageBox.warning(
-                self, "No Directory", "Please select an input directory."
-            )
+            QMessageBox.warning(self, "No Directory", "Please select an input directory.")
             return
 
         force_ocr = self.force_ocr_cb.isChecked()
@@ -364,9 +364,7 @@ class MainWindow(QMainWindow):
                 item.setBackground(Qt.yellow)
 
     def log(self, message: str):
-        self.log_area.append(
-            f"[{time.strftime('%H:%M:%S')}] {message}"
-        )
+        self.log_area.append(f"[{time.strftime('%H:%M:%S')}] {message}")
 
     def processing_finished(self):
         self.start_btn.setEnabled(True)
@@ -378,9 +376,11 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
             reply = QMessageBox.question(
-                self, "Confirm Exit",
+                self,
+                "Confirm Exit",
                 "Processing is running. Are you sure you want to exit?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
             )
             if reply == QMessageBox.Yes:
                 self.worker.stop()

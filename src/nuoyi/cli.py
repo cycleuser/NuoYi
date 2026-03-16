@@ -74,10 +74,12 @@ def convert_directory(
     page_range: str,
     langs: str,
     device: str = "auto",
+    recursive: bool = False,
 ):
     """Batch convert all PDF/DOCX files in a directory."""
-    exts = (".pdf", ".docx")
-    files = sorted(f for f in input_dir.iterdir() if f.suffix.lower() in exts)
+    from .utils import find_documents
+
+    files = find_documents(input_dir, recursive=recursive)
     if not files:
         print("No PDF/DOCX files found in directory.")
         return
@@ -150,6 +152,7 @@ Examples:
   nuoyi paper.pdf -o output/result.md    # Custom output
   nuoyi ./papers --batch                 # Batch directory
   nuoyi ./papers --batch -o ./output     # Batch with output dir
+  nuoyi ./papers --batch -r              # Recursive batch (all subdirs)
   nuoyi paper.pdf --device cuda          # Use NVIDIA GPU
   nuoyi paper.pdf --device rocm          # Use AMD GPU
   nuoyi paper.pdf --device mps           # Use Apple Metal
@@ -211,6 +214,12 @@ Notes:
         "--batch",
         action="store_true",
         help="Process all PDF/DOCX files in the input directory",
+    )
+    parser.add_argument(
+        "--recursive",
+        "-r",
+        action="store_true",
+        help="Recursively process subdirectories (with --batch)",
     )
     parser.add_argument(
         "--device",
@@ -367,6 +376,7 @@ Notes:
         output_dir = Path(args.output) if args.output else input_path
         print(f"Input dir:  {input_path}")
         print(f"Output dir: {output_dir}")
+        print(f"Recursive:  {args.recursive}")
         print(f"Force OCR: {force_ocr}")
         if page_range:
             print(f"Page Range: {page_range}")
@@ -374,7 +384,9 @@ Notes:
         print(f"Device: {device}")
         print()
 
-        convert_directory(input_path, output_dir, force_ocr, page_range, langs, device)
+        convert_directory(
+            input_path, output_dir, force_ocr, page_range, langs, device, args.recursive
+        )
 
     else:
         print(f"Error: Invalid path: {args.input}")
