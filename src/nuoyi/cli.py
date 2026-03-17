@@ -77,7 +77,7 @@ def convert_directory(
     recursive: bool = False,
 ):
     """Batch convert all PDF/DOCX files in a directory."""
-    from .utils import find_documents
+    from .utils import create_output_directories, find_documents, get_output_path
 
     files = find_documents(input_dir, recursive=recursive)
     if not files:
@@ -85,7 +85,9 @@ def convert_directory(
         return
 
     print(f"Found {len(files)} files to process.\n")
-    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create output directories preserving structure
+    create_output_directories(files, input_dir, output_dir, recursive)
 
     pdf_converter = None
     docx_converter = None
@@ -109,7 +111,17 @@ def convert_directory(
 
     for i, file_path in enumerate(files, 1):
         suffix = file_path.suffix.lower()
-        print(f"[{i}/{len(files)}] {file_path.name}...", end=" ", flush=True)
+
+        # Show relative path in recursive mode
+        if recursive:
+            try:
+                display_name = str(file_path.relative_to(input_dir))
+            except ValueError:
+                display_name = file_path.name
+        else:
+            display_name = file_path.name
+
+        print(f"[{i}/{len(files)}] {display_name}...", end=" ", flush=True)
 
         try:
             images = {}
@@ -121,12 +133,12 @@ def convert_directory(
                 print("SKIPPED (no converter)")
                 continue
 
-            out_path = output_dir / f"{file_path.stem}.md"
+            out_path = get_output_path(file_path, input_dir, output_dir, recursive)
 
             if images:
                 images_subdir = f"{file_path.stem}_images"
                 content = save_images_and_update_markdown(
-                    content, images, output_dir, images_subdir
+                    content, images, out_path.parent, images_subdir
                 )
 
             out_path.write_text(content, encoding="utf-8")
@@ -138,6 +150,8 @@ def convert_directory(
             failed += 1
 
     print(f"\nBatch complete: {success} succeeded, {failed} failed.")
+    if recursive:
+        print(f"Output directory structure preserved with '_md' suffix on subdirectories.")
 
 
 def main():

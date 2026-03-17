@@ -53,20 +53,24 @@ class MarkerWorker(QThread):
     def __init__(
         self,
         files: List[Tuple[int, str]],
+        input_dir: str,
         output_dir: str,
         force_ocr: bool = False,
         page_range: str = None,
         langs: str = DEFAULT_LANGS,
         device: str = "auto",
+        recursive: bool = False,
         parent=None,
     ):
         super().__init__(parent)
         self.files = files
-        self.output_dir = output_dir
+        self.input_dir = Path(input_dir)
+        self.output_dir = Path(output_dir)
         self.force_ocr = force_ocr
         self.page_range = page_range
         self.langs = langs
         self.device = device
+        self.recursive = recursive
         self.is_running = True
 
     def run(self):
@@ -324,6 +328,7 @@ class MainWindow(QMainWindow):
             return
 
         force_ocr = self.force_ocr_cb.isChecked()
+        recursive = self.recursive_cb.isChecked()
         page_range = self.page_range_input.text().strip() or None
         selected = [code for code, cb in self.lang_checkboxes.items() if cb.isChecked()]
         langs = ",".join(selected) if selected else DEFAULT_LANGS
@@ -335,11 +340,13 @@ class MainWindow(QMainWindow):
 
         self.worker = MarkerWorker(
             files=self.files_to_process,
+            input_dir=self.in_dir_input.text().strip(),
             output_dir=output_dir,
             force_ocr=force_ocr,
             page_range=page_range,
             langs=langs,
             device=device,
+            recursive=recursive,
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.status_signal.connect(self.update_status)

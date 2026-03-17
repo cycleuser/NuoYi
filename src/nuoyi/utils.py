@@ -556,3 +556,70 @@ def scan_directory(
         result["subdirs"].sort()
 
     return result
+
+
+def get_output_path(
+    input_file: Path,
+    input_dir: Path,
+    output_dir: Path,
+    recursive: bool = False,
+    suffix: str = "_md",
+) -> Path:
+    """Calculate output path preserving directory structure.
+
+    Args:
+        input_file: Path to input file
+        input_dir: Root input directory
+        output_dir: Root output directory
+        recursive: If True, preserve subdirectory structure
+        suffix: Suffix to add to each subdirectory name (default: "_md")
+
+    Returns:
+        Output file path with preserved structure and _md suffix on directories
+    """
+    if not recursive:
+        # Flat mode: all files go directly to output_dir
+        return output_dir / f"{input_file.stem}.md"
+
+    # Recursive mode: preserve directory structure with _md suffix
+    try:
+        rel_path = input_file.relative_to(input_dir)
+    except ValueError:
+        # File not under input_dir, fallback to flat mode
+        return output_dir / f"{input_file.stem}.md"
+
+    # Build output path with _md suffix on each directory component
+    output_parts = []
+    for part in rel_path.parts[:-1]:  # All parts except filename
+        output_parts.append(f"{part}{suffix}")
+
+    # Add filename (without extension) + .md
+    output_parts.append(f"{input_file.stem}.md")
+
+    return output_dir / Path(*output_parts)
+
+
+def create_output_directories(
+    files: list[Path],
+    input_dir: Path,
+    output_dir: Path,
+    recursive: bool = False,
+    suffix: str = "_md",
+):
+    """Create output directories preserving input structure.
+
+    Args:
+        files: List of input file paths
+        input_dir: Root input directory
+        output_dir: Root output directory
+        recursive: If True, create subdirectories with _md suffix
+        suffix: Suffix to add to each subdirectory name
+    """
+    if not recursive:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return
+
+    # Create all necessary output directories
+    for file in files:
+        output_path = get_output_path(file, input_dir, output_dir, recursive, suffix)
+        output_path.parent.mkdir(parents=True, exist_ok=True)

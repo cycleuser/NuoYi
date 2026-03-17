@@ -162,7 +162,7 @@ def convert_directory(
     else:
         output_dir = Path(output_dir)
 
-    from .utils import find_documents
+    from .utils import create_output_directories, find_documents, get_output_path
 
     files = find_documents(input_dir, recursive=recursive)
 
@@ -173,12 +173,15 @@ def convert_directory(
             metadata={"input_dir": str(input_dir), "recursive": recursive},
         )
 
+    # Create output directories preserving structure
+    create_output_directories(files, input_dir, output_dir, recursive)
+
     results = []
     success_count = 0
     failed_count = 0
 
     for f in files:
-        out_path = output_dir / f"{f.stem}.md"
+        out_path = get_output_path(f, input_dir, output_dir, recursive)
         r = convert_file(
             f,
             output_path=out_path,
@@ -189,7 +192,7 @@ def convert_directory(
         )
         results.append(
             {
-                "file": f.name,
+                "file": str(f.relative_to(input_dir)) if recursive else f.name,
                 "success": r.success,
                 "output": str(out_path) if r.success else None,
                 "error": r.error,
