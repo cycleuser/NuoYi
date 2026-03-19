@@ -3,12 +3,11 @@ NuoYi - Basic tests for package functionality.
 """
 
 
-
 def test_version():
     """Test that version is accessible."""
     from nuoyi import __version__
 
-    assert __version__ == "0.2.5"
+    assert __version__ == "0.2.7"
 
 
 def test_imports():

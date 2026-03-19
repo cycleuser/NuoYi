@@ -2,10 +2,13 @@
 NuoYi - Command-line interface for document conversion.
 
 Supported acceleration backends:
-- CUDA: NVIDIA GPUs
-- ROCm: AMD GPUs
-- MPS: Apple Silicon Metal
-- MLX: Apple MLX framework
+- CUDA: NVIDIA GPUs (Linux, Windows)
+- ROCm: AMD GPUs via HIP (Linux)
+- DirectML: AMD/Intel/NVIDIA GPUs on Windows
+- MPS: Apple Silicon Metal (macOS)
+- MLX: Apple MLX framework (macOS)
+- Vulkan: Cross-platform GPU acceleration
+- OpenVINO: Intel CPU/GPU optimization
 - CPU: Universal fallback
 """
 
@@ -32,6 +35,7 @@ def convert_single_file(
     page_range: str,
     langs: str,
     device: str = "auto",
+    low_vram: bool = False,
 ):
     """Convert a single PDF or DOCX file."""
     suffix = input_path.suffix.lower()
@@ -43,6 +47,7 @@ def convert_single_file(
             page_range=page_range,
             langs=langs,
             device=device,
+            low_vram=low_vram,
         )
         content, images = converter.convert_file(str(input_path))
 
@@ -74,6 +79,7 @@ def convert_directory(
     page_range: str,
     langs: str,
     device: str = "auto",
+    low_vram: bool = False,
     recursive: bool = False,
 ):
     """Batch convert all PDF/DOCX files in a directory."""
@@ -86,7 +92,6 @@ def convert_directory(
 
     print(f"Found {len(files)} files to process.\n")
 
-    # Create output directories preserving structure
     create_output_directories(files, input_dir, output_dir, recursive)
 
     pdf_converter = None
@@ -101,6 +106,7 @@ def convert_directory(
             page_range=page_range,
             langs=langs,
             device=device,
+            low_vram=low_vram,
         )
 
     if docx_files:
@@ -112,7 +118,6 @@ def convert_directory(
     for i, file_path in enumerate(files, 1):
         suffix = file_path.suffix.lower()
 
-        # Show relative path in recursive mode
         if recursive:
             try:
                 display_name = str(file_path.relative_to(input_dir))
@@ -151,7 +156,30 @@ def convert_directory(
 
     print(f"\nBatch complete: {success} succeeded, {failed} failed.")
     if recursive:
-        print(f"Output directory structure preserved with '_md' suffix on subdirectories.")
+        print("Output directory structure preserved with '_md' suffix on subdirectories.")
+
+
+DEVICE_DESCRIPTIONS = {
+    "cuda": "NVIDIA GPUs (CUDA)",
+    "rocm": "AMD GPUs - Linux only (ROCm/HIP)",
+    "directml": "AMD/Intel/NVIDIA GPUs - Windows only",
+    "mps": "Apple Silicon Metal (macOS)",
+    "mlx": "Apple MLX framework (macOS)",
+    "vulkan": "Cross-platform GPU (experimental)",
+    "openvino": "Intel CPU/GPU optimization",
+    "cpu": "CPU (universal fallback)",
+}
+
+DEVICE_RECOMMENDATIONS = """
+Platform-specific recommendations:
+  Windows + NVIDIA:    --device cuda
+  Windows + AMD:       --device directml  (install torch-directml)
+  Windows + Intel:     --device directml or --device openvino
+  Linux + NVIDIA:      --device cuda
+  Linux + AMD:         --device rocm      (install ROCm PyTorch)
+  macOS (M1/M2/M3):    --device mlx or --device mps
+  Any + Intel CPU:     --device openvino  (install openvino)
+"""
 
 
 def main():
@@ -160,30 +188,42 @@ def main():
         prog="nuoyi",
         description="NuoYi - Convert PDF/DOCX to Markdown using marker-pdf (offline)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        epilog=f"""
 Examples:
   nuoyi paper.pdf                        # Single file
   nuoyi paper.pdf -o output/result.md    # Custom output
   nuoyi ./papers --batch                 # Batch directory
-  nuoyi ./papers --batch -o ./output     # Batch with output dir
-  nuoyi ./papers --batch -r              # Recursive batch (all subdirs)
+  nuoyi ./papers --batch -r              # Recursive batch
   nuoyi paper.pdf --device cuda          # Use NVIDIA GPU
-  nuoyi paper.pdf --device rocm          # Use AMD GPU
-  nuoyi paper.pdf --device mps           # Use Apple Metal
-  nuoyi paper.pdf --device mlx           # Use Apple MLX
+  nuoyi paper.pdf --device directml      # Use DirectML (Windows AMD)
+  nuoyi paper.pdf --device rocm          # Use ROCm (Linux AMD)
+  nuoyi paper.pdf --device mlx           # Use MLX (Apple Silicon)
+  nuoyi paper.pdf --low-vram             # Low VRAM mode
   nuoyi --gui                            # Launch GUI
 
 Acceleration Backends:
-  cuda   - NVIDIA GPUs (CUDA)
-  rocm   - AMD GPUs (ROCm/HIP)
-  mps    - Apple Silicon Metal Performance Shaders
-  mlx    - Apple MLX framework (experimental)
-  cpu    - Universal fallback (slowest but most compatible)
-  auto   - Automatic selection (default)
+  cuda       NVIDIA GPUs (CUDA)
+  rocm       AMD GPUs via ROCm/HIP (Linux only)
+  directml   AMD/Intel/NVIDIA GPUs on Windows
+  mps        Apple Silicon Metal Performance Shaders
+  mlx        Apple MLX framework (experimental)
+  vulkan     Cross-platform GPU acceleration (experimental)
+  openvino   Intel CPU/GPU optimization
+  cpu        Universal fallback
+  auto       Automatic selection (default)
 
+Memory Options:
+  --low-vram    Enable aggressive memory optimization for GPUs with <8GB VRAM
+                Recommended for: RTX 3050/4050, GTX 1650, RX 560/580, etc.
+{DEVICE_RECOMMENDATIONS}
 Notes:
   marker-pdf models (~2-3 GB) are downloaded automatically on first run.
-  After that, everything works fully offline.
+
+  For AMD GPUs on Windows, install torch-directml:
+    pip install torch-directml
+
+  For AMD GPUs on Linux, use ROCm PyTorch:
+    pip install torch --index-url https://download.pytorch.org/whl/rocm6.0
 
   Use --list-devices to see available acceleration options on your system.
         """,
@@ -239,7 +279,12 @@ Notes:
         "--device",
         default="auto",
         choices=SUPPORTED_DEVICES,
-        help="Device for model inference: auto (default), cuda, rocm, mps, mlx, or cpu",
+        help="Device for model inference (default: auto)",
+    )
+    parser.add_argument(
+        "--low-vram",
+        action="store_true",
+        help="Enable low VRAM mode for GPUs with <8GB memory",
     )
     parser.add_argument(
         "--gui",
@@ -284,20 +329,12 @@ Notes:
     if args.list_devices:
         print("Available acceleration devices:\n")
         available = list_available_devices()
-        device_descriptions = {
-            "cuda": "NVIDIA GPU (CUDA)",
-            "rocm": "AMD GPU (ROCm/HIP)",
-            "mps": "Apple Silicon Metal",
-            "mlx": "Apple MLX Framework",
-            "cpu": "CPU (universal fallback)",
-        }
-        for device in ["cuda", "rocm", "mps", "mlx", "cpu"]:
-            status = "✓ available" if device in available else "✗ not available"
-            desc = device_descriptions.get(device, "")
-            print(f"  {device:6s}  {desc:30s}  {status}")
-        print("\nUse --device <name> to select a specific device.")
-        print("Use --device auto for automatic selection.")
-        print("\nDetailed device information:")
+        device_order = ["cuda", "rocm", "directml", "mps", "mlx", "vulkan", "openvino", "cpu"]
+        for device in device_order:
+            status = "[OK]" if device in available else "[--]"
+            desc = DEVICE_DESCRIPTIONS.get(device, "")
+            print(f"  {status} {device:10s}  {desc}")
+        print()
         print_device_info()
         sys.exit(0)
 
@@ -320,6 +357,7 @@ Notes:
     page_range = args.page_range
     langs = args.langs
     device = args.device
+    low_vram = args.low_vram
 
     if input_path.is_file():
         output_path = Path(args.output) if args.output else input_path.with_suffix(".md")
@@ -331,9 +369,11 @@ Notes:
             print(f"Page Range: {page_range}")
         print(f"Languages: {langs}")
         print(f"Device: {device}")
+        if low_vram:
+            print("Low VRAM: Enabled")
         print()
 
-        convert_single_file(input_path, output_path, force_ocr, page_range, langs, device)
+        convert_single_file(input_path, output_path, force_ocr, page_range, langs, device, low_vram)
 
     elif input_path.is_dir():
         if not args.batch:
@@ -343,63 +383,26 @@ Notes:
         output_dir = Path(args.output) if args.output else input_path
         print(f"Input dir:  {input_path}")
         print(f"Output dir: {output_dir}")
+        if args.recursive:
+            print(f"Recursive:  {args.recursive}")
         print(f"Force OCR: {force_ocr}")
         if page_range:
             print(f"Page Range: {page_range}")
         print(f"Languages: {langs}")
         print(f"Device: {device}")
-        print()
-
-        convert_directory(input_path, output_dir, force_ocr, page_range, langs, device)
-
-    else:
-        print(f"Error: Invalid path: {args.input}")
-        sys.exit(1)
-
-    input_path = Path(args.input)
-    if not input_path.exists():
-        print(f"Error: Path not found: {args.input}")
-        sys.exit(1)
-
-    force_ocr = args.force_ocr
-    page_range = args.page_range
-    langs = args.langs
-    device = args.device
-
-    # Single file mode
-    if input_path.is_file():
-        output_path = Path(args.output) if args.output else input_path.with_suffix(".md")
-
-        print(f"Input:  {input_path}")
-        print(f"Output: {output_path}")
-        print(f"Force OCR: {force_ocr}")
-        if page_range:
-            print(f"Page Range: {page_range}")
-        print(f"Languages: {langs}")
-        print(f"Device: {device}")
-        print()
-
-        convert_single_file(input_path, output_path, force_ocr, page_range, langs, device)
-
-    # Batch directory mode
-    elif input_path.is_dir():
-        if not args.batch:
-            print(f"Error: {input_path} is a directory. Use --batch to process all files in it.")
-            sys.exit(1)
-
-        output_dir = Path(args.output) if args.output else input_path
-        print(f"Input dir:  {input_path}")
-        print(f"Output dir: {output_dir}")
-        print(f"Recursive:  {args.recursive}")
-        print(f"Force OCR: {force_ocr}")
-        if page_range:
-            print(f"Page Range: {page_range}")
-        print(f"Languages: {langs}")
-        print(f"Device: {device}")
+        if low_vram:
+            print("Low VRAM: Enabled")
         print()
 
         convert_directory(
-            input_path, output_dir, force_ocr, page_range, langs, device, args.recursive
+            input_path,
+            output_dir,
+            force_ocr,
+            page_range,
+            langs,
+            device,
+            low_vram,
+            args.recursive,
         )
 
     else:

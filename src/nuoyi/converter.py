@@ -20,6 +20,9 @@ from .utils import (
     clean_markdown,
     clear_gpu_memory,
     clear_mlx_memory,
+    enable_low_vram_mode,
+    get_gpu_memory_info,
+    get_recommended_batch_size,
     select_device,
     setup_memory_optimization,
 )
@@ -34,6 +37,9 @@ from marker.models import create_model_dict
 from marker.output import text_from_rendered
 
 
+LOW_VRAM_THRESHOLD_GB = 8.0
+
+
 def _is_gpu_device(device: str) -> bool:
     """Check if device is a GPU type that can experience OOM."""
     return device in ("cuda", "rocm", "mps")
@@ -42,6 +48,19 @@ def _is_gpu_device(device: str) -> bool:
 def _is_mlx_device(device: str) -> bool:
     """Check if device is MLX."""
     return device == "mlx"
+
+
+def _is_low_vram_device() -> bool:
+    """Check if current GPU has low VRAM (<8GB)."""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return False
+        total, free = get_gpu_memory_info()
+        return total < LOW_VRAM_THRESHOLD_GB
+    except Exception:
+        return False
 
 
 class MarkerPDFConverter:
@@ -56,6 +75,10 @@ class MarkerPDFConverter:
     - mps: Apple Silicon Metal
     - mlx: Apple MLX framework (experimental)
     - cpu: Universal fallback
+
+    Memory optimization:
+    - low_vram: Enable aggressive memory optimization for GPUs with <8GB VRAM
+    - batch_size: Number of pages to process at once (auto-determined if not set)
     """
 
     def __init__(
@@ -64,14 +87,34 @@ class MarkerPDFConverter:
         page_range: str | None = None,
         langs: str = DEFAULT_LANGS,
         device: str = "auto",
+        low_vram: bool = False,
+        batch_size: int | None = None,
     ):
         self.force_ocr = force_ocr
         self.page_range = page_range
         self.langs = langs
+        self.low_vram = low_vram
+        self.batch_size = batch_size
 
         self.device = select_device(device)
+
+        if self.low_vram or (_is_gpu_device(self.device) and _is_low_vram_device()):
+            self._enable_low_vram()
+            self.low_vram = True
+
+        if self.batch_size is None and _is_gpu_device(self.device):
+            total, free = get_gpu_memory_info()
+            self.batch_size = get_recommended_batch_size(free if free > 0 else total)
+            if self.low_vram:
+                self.batch_size = max(1, self.batch_size // 2)
+
         self._setup_device_environment()
         self._build_and_load_models()
+
+    def _enable_low_vram(self):
+        """Enable low VRAM optimization mode."""
+        print("[Memory] Enabling low VRAM optimization mode...")
+        enable_low_vram_mode()
 
     def _setup_device_environment(self):
         """Set up environment variables for the selected device."""
@@ -99,18 +142,13 @@ class MarkerPDFConverter:
 
     def _load_models_with_fallback(self, config_parser):
         """Load marker-pdf models with automatic CPU fallback on OOM."""
-        device_display = self.device.upper()
-        if self.device == "cuda" and _is_rocm_runtime():
-            device_display = "ROCm"
-        elif self.device == "mps":
-            device_display = "MPS (Apple Metal)"
-        elif self.device == "mlx":
-            device_display = "MLX (Apple Silicon)"
-        elif self.device == "cpu":
-            device_display = "CPU"
+        device_display = self._get_device_display()
 
         print(f"Loading marker-pdf models on {device_display}...")
         print("(First run downloads ~2-3 GB of model weights)")
+
+        if self.low_vram:
+            print("[Memory] Low VRAM mode enabled - using aggressive memory optimization")
 
         try:
             self._clear_device_memory()
@@ -127,6 +165,17 @@ class MarkerPDFConverter:
             self._handle_load_error(e, config_parser)
         except MemoryError:
             self._handle_memory_error(config_parser)
+
+    def _get_device_display(self) -> str:
+        """Get display name for current device."""
+        if self.device == "cuda" and _is_rocm_runtime():
+            return "ROCm"
+        device_names = {
+            "mps": "MPS (Apple Metal)",
+            "mlx": "MLX (Apple Silicon)",
+            "cpu": "CPU",
+        }
+        return device_names.get(self.device, self.device.upper())
 
     def _handle_load_error(self, error: RuntimeError, config_parser):
         """Handle RuntimeError during model loading (e.g., CUDA OOM)."""
@@ -146,7 +195,8 @@ class MarkerPDFConverter:
 
             self.device = "cpu"
             os.environ["TORCH_DEVICE"] = "cpu"
-            del os.environ["MLX_DEVICE"]
+            if "MLX_DEVICE" in os.environ:
+                del os.environ["MLX_DEVICE"]
 
             print("Reloading models on CPU...")
             self.artifact_dict = create_model_dict()

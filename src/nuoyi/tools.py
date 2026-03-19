@@ -50,11 +50,16 @@ TOOLS = [
                         "type": "string",
                         "enum": SUPPORTED_DEVICES,
                         "description": (
-                            "Compute device for model inference. "
-                            "Options: auto, cuda (NVIDIA), rocm (AMD), "
-                            "mps (Apple Metal), mlx (Apple MLX), cpu."
+                            "Compute device: cuda (NVIDIA), rocm (AMD Linux), "
+                            "directml (AMD/Intel Windows), mps/mlx (Apple), "
+                            "vulkan, openvino (Intel), cpu."
                         ),
                         "default": "auto",
+                    },
+                    "low_vram": {
+                        "type": "boolean",
+                        "description": "Enable low VRAM mode for GPUs with <8GB memory.",
+                        "default": False,
                     },
                 },
                 "required": ["input_path"],
@@ -93,11 +98,21 @@ TOOLS = [
                         "type": "string",
                         "enum": SUPPORTED_DEVICES,
                         "description": (
-                            "Compute device for model inference. "
-                            "Options: auto, cuda (NVIDIA), rocm (AMD), "
-                            "mps (Apple Metal), mlx (Apple MLX), cpu."
+                            "Compute device: cuda (NVIDIA), rocm (AMD Linux), "
+                            "directml (AMD/Intel Windows), mps/mlx (Apple), "
+                            "vulkan, openvino (Intel), cpu."
                         ),
                         "default": "auto",
+                    },
+                    "low_vram": {
+                        "type": "boolean",
+                        "description": "Enable low VRAM mode for GPUs with <8GB memory.",
+                        "default": False,
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "Recursively process subdirectories.",
+                        "default": False,
                     },
                 },
                 "required": ["input_dir"],
