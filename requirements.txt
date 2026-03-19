@@ -3,21 +3,42 @@
 # https://github.com/cycleuser/NuoYi
 # =============================================================================
 
-# ── Core dependencies ─────────────────────────────────────────────────────────
-marker-pdf>=1.0.0       # PDF conversion engine (surya OCR + layout detection)
-PyMuPDF>=1.23.0         # PDF page counting and rendering
-python-docx>=0.8.11     # DOCX document conversion
-Pillow>=9.0.0           # Image processing
+# ── Core dependencies (always required) ───────────────────────────────────────
+marker-pdf>=1.0.0           # PDF conversion engine (surya OCR + layout detection)
+PyMuPDF>=1.23.0             # PDF page counting and rendering
+python-docx>=0.8.11         # DOCX document conversion
+Pillow>=9.0.0               # Image processing
+
+# ── PDF Engines (Local, Offline) ───────────────────────────────────────────────
+
+# marker (default, best quality) - already included above
+
+# mineru (excellent for Chinese documents)
+magic-pdf[full]>=1.0.0
+
+# docling (balanced quality, IBM)
+docling>=1.0.0
+
+# pymupdf4llm (fastest, no OCR)
+pymupdf4llm>=0.0.17
+
+# pdfplumber (lightweight, good tables)
+pdfplumber>=0.10.0
+
+# ── PDF Engines (Cloud, API key required) ─────────────────────────────────────
+
+# llamaparse (LlamaIndex cloud)
+llama-parse>=0.1.0
+
+# mathpix (math/scientific documents)
+requests>=2.28.0
 
 # ── GUI (optional) ────────────────────────────────────────────────────────────
-# Install with: pip install nuoyi[gui]
-# Or uncomment the line below:
-# PySide6>=6.5.0
+PySide6>=6.5.0
 
 # ── Development (optional) ────────────────────────────────────────────────────
-# Install with: pip install nuoyi[dev]
-# Or uncomment the lines below:
-# pytest>=7.0.0
-# pytest-cov>=4.0.0
-# build>=1.0.0
-# twine>=4.0.0
+pytest>=7.0.0
+pytest-cov>=4.0.0
+build>=1.0.0
+twine>=4.0.0
+ruff>=0.1.0

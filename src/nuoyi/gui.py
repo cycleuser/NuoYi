@@ -1,21 +1,29 @@
 """
 NuoYi - PySide6 GUI for batch PDF/DOCX to Markdown conversion.
+
+Supported acceleration backends:
+- CUDA: NVIDIA GPUs
+- ROCm: AMD GPUs (Linux)
+- DirectML: AMD/Intel/NVIDIA GPUs (Windows)
+- MPS: Apple Silicon Metal (macOS)
+- MLX: Apple MLX framework (macOS)
+- Vulkan: Cross-platform GPU
+- OpenVINO: Intel CPU/GPU
+- CPU: Universal fallback
 """
 
 import os
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QThread, Signal
-
-# --- PySide6 (GUI) ---
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -30,35 +38,58 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .converter import (
-    DocxConverter,
-    MarkerPDFConverter,
-)
+from .converter import DocxConverter, get_converter, list_available_engines
 from .utils import (
     DEFAULT_LANGS,
     SUPPORTED_LANGUAGES,
     find_documents,
+    list_available_devices,
     save_images_and_update_markdown,
 )
 
+DEVICE_DESCRIPTIONS = {
+    "auto": "Auto (recommended)",
+    "cuda": "CUDA (NVIDIA GPU)",
+    "rocm": "ROCm (AMD GPU - Linux)",
+    "directml": "DirectML (AMD/Intel - Windows)",
+    "mps": "MPS (Apple Metal)",
+    "mlx": "MLX (Apple Silicon)",
+    "vulkan": "Vulkan (cross-platform)",
+    "openvino": "OpenVINO (Intel)",
+    "cpu": "CPU (fallback)",
+}
 
-class MarkerWorker(QThread):
+ENGINE_DESCRIPTIONS = {
+    "auto": "Auto (recommended)",
+    "marker": "Marker - Best quality, GPU",
+    "mineru": "MinerU - Chinese docs, GPU optional",
+    "docling": "Docling - Balanced, GPU optional",
+    "pymupdf": "PyMuPDF - Fastest, no GPU",
+    "pdfplumber": "PDFPlumber - Lightweight, no GPU",
+    "llamaparse": "LlamaParse - Cloud, API key",
+    "mathpix": "Mathpix - Math specialist, API key",
+}
+
+
+class ConverterWorker(QThread):
     """Background worker for batch file processing."""
 
-    progress_signal = Signal(int, int)  # row, progress percentage
-    status_signal = Signal(int, str)  # row, status message
-    log_signal = Signal(str)  # log message
+    progress_signal = Signal(int, int)
+    status_signal = Signal(int, str)
+    log_signal = Signal(str)
     finished_signal = Signal()
 
     def __init__(
         self,
-        files: List[Tuple[int, str]],
+        files: list[tuple[int, str]],
         input_dir: str,
         output_dir: str,
         force_ocr: bool = False,
-        page_range: str = None,
+        page_range: str | None = None,
         langs: str = DEFAULT_LANGS,
         device: str = "auto",
+        low_vram: bool = False,
+        engine: str = "auto",
         recursive: bool = False,
         parent=None,
     ):
@@ -70,28 +101,34 @@ class MarkerWorker(QThread):
         self.page_range = page_range
         self.langs = langs
         self.device = device
+        self.low_vram = low_vram
+        self.engine = engine
         self.recursive = recursive
         self.is_running = True
 
     def run(self):
         self.log_signal.emit(f"Starting processing of {len(self.files)} files...")
+        self.log_signal.emit(f"Engine: {self.engine}, Device: {self.device}")
 
         pdf_converter = None
         docx_converter = None
 
         try:
             if any(fp.lower().endswith(".pdf") for _, fp in self.files):
-                self.log_signal.emit(f"Loading marker-pdf models (device={self.device})...")
-                self.status_signal.emit(self.files[0][0], "Loading models...")
-                pdf_converter = MarkerPDFConverter(
+                self.log_signal.emit(f"Initializing {self.engine} converter...")
+                self.status_signal.emit(self.files[0][0], "Loading...")
+                pdf_converter = get_converter(
+                    engine=self.engine,
                     force_ocr=self.force_ocr,
                     page_range=self.page_range,
                     langs=self.langs,
                     device=self.device,
+                    low_vram=self.low_vram,
                 )
-                self.log_signal.emit(f"Models loaded on {pdf_converter.device.upper()}.")
+                self.log_signal.emit("Converter ready.")
         except Exception as e:
-            self.log_signal.emit(f"Failed to load marker-pdf: {e}. PDF files will be skipped.")
+            self.log_signal.emit(f"Failed to initialize PDF converter: {e}")
+            self.log_signal.emit("PDF files will be skipped.")
 
         if any(fp.lower().endswith(".docx") for _, fp in self.files):
             docx_converter = DocxConverter()
@@ -152,92 +189,178 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("NuoYi - PDF/DOCX to Markdown Converter")
-        self.resize(900, 700)
+        self.resize(1000, 800)
+
+        self.files_to_process: list[tuple[int, str]] = []
+        self.worker: ConverterWorker | None = None
+        self.available_devices: list[str] = []
+        self.available_engines: dict[str, dict] = {}
 
         self.setup_ui()
+        self.detect_hardware()
 
-        self.files_to_process: List[Tuple[int, str]] = []
-        self.worker: Optional[MarkerWorker] = None
+    def detect_hardware(self):
+        """Detect available acceleration devices and engines."""
+        self.log("Detecting hardware...")
+
+        self.available_devices = list_available_devices()
+        self.available_engines = list_available_engines()
+
+        self.update_device_combo()
+        self.update_engine_combo()
+
+        device_list = ", ".join(self.available_devices)
+        self.log(f"Devices: {device_list}")
+
+        engine_list = [k for k, v in self.available_engines.items() if v["available"]]
+        self.log(f"Engines: {', '.join(engine_list)}")
+
+    def update_device_combo(self):
+        self.device_combo.clear()
+        self.device_combo.addItem(DEVICE_DESCRIPTIONS["auto"], "auto")
+
+        for device in self.available_devices:
+            if device != "cpu":
+                desc = DEVICE_DESCRIPTIONS.get(device, device)
+                self.device_combo.addItem(desc, device)
+
+        self.device_combo.addItem(DEVICE_DESCRIPTIONS["cpu"], "cpu")
+
+        if "mps" in self.available_devices:
+            self.device_combo.setCurrentIndex(self.device_combo.findData("mps"))
+        elif "mlx" in self.available_devices:
+            self.device_combo.setCurrentIndex(self.device_combo.findData("mlx"))
+        elif "cuda" in self.available_devices:
+            self.device_combo.setCurrentIndex(self.device_combo.findData("cuda"))
+
+    def update_engine_combo(self):
+        self.engine_combo.clear()
+        self.engine_combo.addItem(ENGINE_DESCRIPTIONS["auto"], "auto")
+
+        for engine, info in self.available_engines.items():
+            if info["available"]:
+                desc = ENGINE_DESCRIPTIONS.get(engine, engine)
+                status = "" if info["available"] else " (unavailable)"
+                self.engine_combo.addItem(desc + status, engine)
+
+        self.engine_combo.setToolTip(self._get_engine_tooltip())
+
+        if self.available_engines.get("marker", {}).get("available"):
+            self.engine_combo.setCurrentIndex(self.engine_combo.findData("auto"))
+        elif self.available_engines.get("pymupdf", {}).get("available"):
+            self.engine_combo.setCurrentIndex(self.engine_combo.findData("pymupdf"))
+
+    def _get_engine_tooltip(self) -> str:
+        lines = ["PDF Engines:"]
+        for name, info in self.available_engines.items():
+            status = "[OK]" if info["available"] else "[--]"
+            lines.append(f"  {status} {name}: {info.get('notes', '')}")
+        return "\n".join(lines)
 
     def setup_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
 
-        # --- Input directory ---
+        layout.addWidget(self._create_io_group())
+        layout.addWidget(self._create_options_group())
+        layout.addWidget(self._create_file_table())
+        layout.addWidget(self._create_log_area())
+
+    def _create_io_group(self) -> QGroupBox:
+        group = QGroupBox("Input / Output")
+        layout = QVBoxLayout(group)
+
         in_layout = QHBoxLayout()
-        in_label = QLabel("Input Directory:")
+        in_layout.addWidget(QLabel("Input:"))
         self.in_dir_input = QLineEdit()
         self.in_dir_input.setReadOnly(True)
-        self.in_dir_input.setPlaceholderText("Select a directory containing PDF/DOCX files")
+        self.in_dir_input.setPlaceholderText("Select directory or files")
         self.browse_in_btn = QPushButton("Browse")
         self.browse_in_btn.clicked.connect(self.browse_input_directory)
-        in_layout.addWidget(in_label)
         in_layout.addWidget(self.in_dir_input)
         in_layout.addWidget(self.browse_in_btn)
         layout.addLayout(in_layout)
 
-        # --- Output directory ---
         out_layout = QHBoxLayout()
-        out_label = QLabel("Output Directory:")
+        out_layout.addWidget(QLabel("Output:"))
         self.out_dir_input = QLineEdit()
         self.out_dir_input.setReadOnly(True)
         self.out_dir_input.setPlaceholderText("Same as input (default)")
         self.browse_out_btn = QPushButton("Browse")
         self.browse_out_btn.clicked.connect(self.browse_output_directory)
-        out_layout.addWidget(out_label)
         out_layout.addWidget(self.out_dir_input)
         out_layout.addWidget(self.browse_out_btn)
         layout.addLayout(out_layout)
 
-        # --- Options row 1 ---
-        opts_layout = QHBoxLayout()
+        return group
 
+    def _create_options_group(self) -> QGroupBox:
+        group = QGroupBox("Options")
+        layout = QVBoxLayout(group)
+
+        row1 = QHBoxLayout()
         self.force_ocr_cb = QCheckBox("Force OCR")
-        self.force_ocr_cb.setToolTip("Force OCR even for digital PDFs with embedded text")
-        opts_layout.addWidget(self.force_ocr_cb)
+        self.force_ocr_cb.setToolTip("Force OCR for digital PDFs")
+        row1.addWidget(self.force_ocr_cb)
 
-        self.recursive_cb = QCheckBox("Recursive (include subdirectories)")
-        self.recursive_cb.setToolTip("Scan all subdirectories for PDF/DOCX files")
-        self.recursive_cb.setChecked(False)
-        opts_layout.addWidget(self.recursive_cb)
+        self.recursive_cb = QCheckBox("Recursive")
+        self.recursive_cb.setToolTip("Scan subdirectories")
+        row1.addWidget(self.recursive_cb)
 
-        opts_layout.addWidget(QLabel("Page Range:"))
+        self.low_vram_cb = QCheckBox("Low VRAM")
+        self.low_vram_cb.setToolTip("Enable for GPUs <8GB")
+        row1.addWidget(self.low_vram_cb)
+
+        row1.addWidget(QLabel("Page Range:"))
         self.page_range_input = QLineEdit()
         self.page_range_input.setPlaceholderText("e.g. 0-5,10")
-        self.page_range_input.setMaximumWidth(150)
-        opts_layout.addWidget(self.page_range_input)
+        self.page_range_input.setMaximumWidth(100)
+        row1.addWidget(self.page_range_input)
 
-        opts_layout.addWidget(QLabel("Device:"))
+        row1.addStretch()
+        layout.addLayout(row1)
+
+        row2 = QHBoxLayout()
+
+        row2.addWidget(QLabel("Engine:"))
+        self.engine_combo = QComboBox()
+        self.engine_combo.setMinimumWidth(200)
+        row2.addWidget(self.engine_combo)
+
+        row2.addWidget(QLabel("Device:"))
         self.device_combo = QComboBox()
-        self.device_combo.addItems(["auto", "cpu", "cuda"])
-        self.device_combo.setToolTip(
-            "auto: Use GPU if enough VRAM, else CPU\n"
-            "cpu: Force CPU (slower but no VRAM limit)\n"
-            "cuda: Force GPU (may OOM on large PDFs)"
-        )
-        self.device_combo.setMaximumWidth(100)
-        opts_layout.addWidget(self.device_combo)
+        self.device_combo.setMinimumWidth(180)
+        row2.addWidget(self.device_combo)
 
-        opts_layout.addStretch()
-        layout.addLayout(opts_layout)
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setToolTip("Re-detect hardware")
+        self.refresh_btn.clicked.connect(self.detect_hardware)
+        row2.addWidget(self.refresh_btn)
 
-        # --- Languages ---
-        lang_layout = QHBoxLayout()
-        lang_layout.addWidget(QLabel("Languages:"))
+        row2.addStretch()
+        layout.addLayout(row2)
 
+        row3 = QHBoxLayout()
+        row3.addWidget(QLabel("Languages:"))
         default_codes = DEFAULT_LANGS.split(",")
         self.lang_checkboxes = {}
         for code, name in SUPPORTED_LANGUAGES.items():
-            cb = QCheckBox(f"{code} ({name.split('/')[0].strip()})")
+            cb = QCheckBox(code)
             cb.setChecked(code in default_codes)
+            cb.setToolTip(name)
             self.lang_checkboxes[code] = cb
-            lang_layout.addWidget(cb)
+            row3.addWidget(cb)
+        row3.addStretch()
+        layout.addLayout(row3)
 
-        lang_layout.addStretch()
-        layout.addLayout(lang_layout)
+        return group
 
-        # --- File table ---
+    def _create_file_table(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+
         self.table = QTableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Filename", "Status", "Progress"])
@@ -247,7 +370,6 @@ class MainWindow(QMainWindow):
         self.table.setColumnWidth(2, 100)
         layout.addWidget(self.table)
 
-        # --- Start button ---
         self.start_btn = QPushButton("Start Conversion")
         self.start_btn.clicked.connect(self.start_processing)
         self.start_btn.setEnabled(False)
@@ -256,12 +378,20 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self.start_btn)
 
-        # --- Log area ---
-        log_label = QLabel("Logs:")
-        layout.addWidget(log_label)
+        return widget
+
+    def _create_log_area(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        layout.addWidget(QLabel("Logs:"))
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
+        self.log_area.setMaximumHeight(120)
         layout.addWidget(self.log_area)
+
+        return widget
 
     def browse_input_directory(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Input Directory")
@@ -280,14 +410,10 @@ class MainWindow(QMainWindow):
 
         try:
             recursive = self.recursive_cb.isChecked()
-
-            # Use find_documents for both recursive and non-recursive scanning
             files = find_documents(Path(directory), recursive=recursive)
 
             if not files:
-                QMessageBox.information(
-                    self, "No Files Found", "No PDF or DOCX files found in the selected directory."
-                )
+                QMessageBox.information(self, "No Files", "No PDF or DOCX files found.")
                 self.start_btn.setEnabled(False)
                 return
 
@@ -297,10 +423,8 @@ class MainWindow(QMainWindow):
 
                 filename = filepath.name
                 if recursive:
-                    # Show relative path for recursive scan
                     try:
-                        rel_path = filepath.relative_to(Path(directory))
-                        filename = str(rel_path)
+                        filename = str(filepath.relative_to(Path(directory)))
                     except ValueError:
                         pass
 
@@ -309,36 +433,36 @@ class MainWindow(QMainWindow):
                 self.table.setItem(i, 2, QTableWidgetItem("0%"))
 
             self.start_btn.setEnabled(True)
-
-            if recursive:
-                subdirs = set(f.parent for f in files)
-                self.log(f"Found {len(files)} files in {len(subdirs)} subdirectories")
-            else:
-                self.log(f"Found {len(files)} files in {directory}")
+            self.log(f"Found {len(files)} files")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to scan directory: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to scan: {e}")
 
     def start_processing(self):
         output_dir = self.out_dir_input.text().strip()
         if not output_dir:
             output_dir = self.in_dir_input.text().strip()
         if not output_dir:
-            QMessageBox.warning(self, "No Directory", "Please select an input directory.")
+            QMessageBox.warning(self, "No Directory", "Select input directory.")
             return
 
         force_ocr = self.force_ocr_cb.isChecked()
         recursive = self.recursive_cb.isChecked()
+        low_vram = self.low_vram_cb.isChecked()
         page_range = self.page_range_input.text().strip() or None
         selected = [code for code, cb in self.lang_checkboxes.items() if cb.isChecked()]
         langs = ",".join(selected) if selected else DEFAULT_LANGS
-        device = self.device_combo.currentText()
+        device = self.device_combo.currentData() or "auto"
+        engine = self.engine_combo.currentData() or "auto"
 
         self.start_btn.setEnabled(False)
         self.browse_in_btn.setEnabled(False)
         self.browse_out_btn.setEnabled(False)
+        self.engine_combo.setEnabled(False)
+        self.device_combo.setEnabled(False)
+        self.refresh_btn.setEnabled(False)
 
-        self.worker = MarkerWorker(
+        self.worker = ConverterWorker(
             files=self.files_to_process,
             input_dir=self.in_dir_input.text().strip(),
             output_dir=output_dir,
@@ -346,6 +470,8 @@ class MainWindow(QMainWindow):
             page_range=page_range,
             langs=langs,
             device=device,
+            low_vram=low_vram,
+            engine=engine,
             recursive=recursive,
         )
         self.worker.progress_signal.connect(self.update_progress)
@@ -364,11 +490,11 @@ class MainWindow(QMainWindow):
         if item:
             item.setText(status)
             if status == "Completed":
-                item.setBackground(Qt.green)
+                item.setBackground(Qt.GlobalColor.green)
             elif status in ("Failed", "Error"):
-                item.setBackground(Qt.red)
+                item.setBackground(Qt.GlobalColor.red)
             elif "Converting" in status or "Loading" in status:
-                item.setBackground(Qt.yellow)
+                item.setBackground(Qt.GlobalColor.yellow)
 
     def log(self, message: str):
         self.log_area.append(f"[{time.strftime('%H:%M:%S')}] {message}")
@@ -377,19 +503,22 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.browse_in_btn.setEnabled(True)
         self.browse_out_btn.setEnabled(True)
+        self.engine_combo.setEnabled(True)
+        self.device_combo.setEnabled(True)
+        self.refresh_btn.setEnabled(True)
         self.log("All tasks completed.")
         QMessageBox.information(self, "Done", "Processing completed.")
 
-    def closeEvent(self, event):
+    def closeEvent(self, event):  # noqa: N802
         if self.worker and self.worker.isRunning():
             reply = QMessageBox.question(
                 self,
                 "Confirm Exit",
-                "Processing is running. Are you sure you want to exit?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                "Processing is running. Exit?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if reply == QMessageBox.Yes:
+            if reply == QMessageBox.StandardButton.Yes:
                 self.worker.stop()
                 self.worker.wait()
                 event.accept()

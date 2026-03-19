@@ -1,14 +1,25 @@
 """
 NuoYi - Command-line interface for document conversion.
 
-Supported acceleration backends:
-- CUDA: NVIDIA GPUs (Linux, Windows)
-- ROCm: AMD GPUs via HIP (Linux)
-- DirectML: AMD/Intel/NVIDIA GPUs on Windows
-- MPS: Apple Silicon Metal (macOS)
-- MLX: Apple MLX framework (macOS)
-- Vulkan: Cross-platform GPU acceleration
-- OpenVINO: Intel CPU/GPU optimization
+Supported PDF engines:
+
+Local (free, offline):
+- marker: Best quality, OCR, GPU recommended, ~3GB models
+- mineru: Excellent for Chinese, OCR, GPU optional, ~1.5GB
+- docling: Balanced quality, OCR, GPU optional, ~1.5GB
+- pymupdf: Fastest, no GPU, no OCR
+- pdfplumber: Lightweight, good tables, no GPU, no OCR
+
+Cloud (API key required):
+- llamaparse: LlamaIndex cloud, excellent quality
+- mathpix: Best for math/scientific documents
+
+Acceleration backends (for marker/mineru/docling):
+- CUDA: NVIDIA GPUs
+- ROCm: AMD GPUs (Linux)
+- DirectML: AMD/Intel GPUs (Windows)
+- MPS: Apple Metal (macOS)
+- MLX: Apple MLX (macOS)
 - CPU: Universal fallback
 """
 
@@ -17,10 +28,11 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .converter import DocxConverter, MarkerPDFConverter
+from .converter import DocxConverter, get_converter
 from .utils import (
     DEFAULT_LANGS,
     SUPPORTED_DEVICES,
+    SUPPORTED_ENGINES,
     SUPPORTED_LANGUAGES,
     list_available_devices,
     print_device_info,
@@ -32,17 +44,19 @@ def convert_single_file(
     input_path: Path,
     output_path: Path,
     force_ocr: bool,
-    page_range: str,
+    page_range: str | None,
     langs: str,
     device: str = "auto",
     low_vram: bool = False,
+    engine: str = "auto",
 ):
     """Convert a single PDF or DOCX file."""
     suffix = input_path.suffix.lower()
     images = {}
 
     if suffix == ".pdf":
-        converter = MarkerPDFConverter(
+        converter = get_converter(
+            engine=engine,
             force_ocr=force_ocr,
             page_range=page_range,
             langs=langs,
@@ -76,10 +90,11 @@ def convert_directory(
     input_dir: Path,
     output_dir: Path,
     force_ocr: bool,
-    page_range: str,
+    page_range: str | None,
     langs: str,
     device: str = "auto",
     low_vram: bool = False,
+    engine: str = "auto",
     recursive: bool = False,
 ):
     """Batch convert all PDF/DOCX files in a directory."""
@@ -101,7 +116,8 @@ def convert_directory(
     docx_files = [f for f in files if f.suffix.lower() == ".docx"]
 
     if pdf_files:
-        pdf_converter = MarkerPDFConverter(
+        pdf_converter = get_converter(
+            engine=engine,
             force_ocr=force_ocr,
             page_range=page_range,
             langs=langs,
@@ -170,151 +186,96 @@ DEVICE_DESCRIPTIONS = {
     "cpu": "CPU (universal fallback)",
 }
 
-DEVICE_RECOMMENDATIONS = """
-Platform-specific recommendations:
-  Windows + NVIDIA:    --device cuda
-  Windows + AMD:       --device directml  (install torch-directml)
-  Windows + Intel:     --device directml or --device openvino
-  Linux + NVIDIA:      --device cuda
-  Linux + AMD:         --device rocm      (install ROCm PyTorch)
-  macOS (M1/M2/M3):    --device mlx or --device mps
-  Any + Intel CPU:     --device openvino  (install openvino)
-"""
+ENGINE_DESCRIPTIONS = {
+    "marker": "Best quality, OCR, GPU recommended (~3GB)",
+    "mineru": "Great for Chinese, OCR, GPU optional (~1.5GB)",
+    "docling": "Balanced, OCR, GPU optional (~1.5GB)",
+    "pymupdf": "Fastest, no GPU, no OCR",
+    "pdfplumber": "Lightweight, good tables, no GPU, no OCR",
+    "llamaparse": "Cloud, API key (LLAMA_CLOUD_API_KEY)",
+    "mathpix": "Cloud, math specialist, API key required",
+}
 
 
 def main():
     """Main entry point for NuoYi CLI."""
     parser = argparse.ArgumentParser(
         prog="nuoyi",
-        description="NuoYi - Convert PDF/DOCX to Markdown using marker-pdf (offline)",
+        description="NuoYi - Convert PDF/DOCX to Markdown",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"""
+        epilog="""
 Examples:
-  nuoyi paper.pdf                        # Single file
-  nuoyi paper.pdf -o output/result.md    # Custom output
-  nuoyi ./papers --batch                 # Batch directory
-  nuoyi ./papers --batch -r              # Recursive batch
+  nuoyi paper.pdf                        # Auto-select engine
+  nuoyi paper.pdf --engine pymupdf       # Fast, no GPU
+  nuoyi paper.pdf --engine marker        # Best quality
+  nuoyi paper.pdf --engine mineru        # Chinese docs
+  nuoyi paper.pdf --engine llamaparse    # Cloud (needs API key)
   nuoyi paper.pdf --device cuda          # Use NVIDIA GPU
-  nuoyi paper.pdf --device directml      # Use DirectML (Windows AMD)
-  nuoyi paper.pdf --device rocm          # Use ROCm (Linux AMD)
-  nuoyi paper.pdf --device mlx           # Use MLX (Apple Silicon)
   nuoyi paper.pdf --low-vram             # Low VRAM mode
+  nuoyi ./papers --batch                 # Batch directory
   nuoyi --gui                            # Launch GUI
+  nuoyi --web                            # Launch Web Interface
+  nuoyi --web --port 8080                # Web on port 8080
+  nuoyi --list-engines                   # Show all engines
 
-Acceleration Backends:
-  cuda       NVIDIA GPUs (CUDA)
-  rocm       AMD GPUs via ROCm/HIP (Linux only)
-  directml   AMD/Intel/NVIDIA GPUs on Windows
-  mps        Apple Silicon Metal Performance Shaders
-  mlx        Apple MLX framework (experimental)
-  vulkan     Cross-platform GPU acceleration (experimental)
-  openvino   Intel CPU/GPU optimization
-  cpu        Universal fallback
-  auto       Automatic selection (default)
+PDF Engines (Local, Free):
+  marker     Best quality, OCR, layout detection
+             Install: pip install marker-pdf
+  mineru     Excellent for Chinese documents
+             Install: pip install magic-pdf[full]
+  docling    Balanced quality, IBM
+             Install: pip install docling
+  pymupdf    Fastest, no OCR, digital PDFs
+             Install: pip install pymupdf4llm
+  pdfplumber Lightweight, good tables
+             Install: pip install pdfplumber
 
-Memory Options:
-  --low-vram    Enable aggressive memory optimization for GPUs with <8GB VRAM
-                Recommended for: RTX 3050/4050, GTX 1650, RX 560/580, etc.
-{DEVICE_RECOMMENDATIONS}
-Notes:
-  marker-pdf models (~2-3 GB) are downloaded automatically on first run.
+PDF Engines (Cloud, API key):
+  llamaparse LlamaIndex cloud, excellent quality
+             Set: export LLAMA_CLOUD_API_KEY=xxx
+  mathpix    Math/scientific documents
+             Set: export MATHPIX_APP_ID=xxx MATHPIX_APP_KEY=xxx
 
-  For AMD GPUs on Windows, install torch-directml:
-    pip install torch-directml
-
-  For AMD GPUs on Linux, use ROCm PyTorch:
-    pip install torch --index-url https://download.pytorch.org/whl/rocm6.0
-
-  Use --list-devices to see available acceleration options on your system.
+Devices (for marker engine):
+  cuda       NVIDIA GPUs
+  rocm       AMD GPUs (Linux)
+  directml   AMD/Intel GPUs (Windows)
+  mps        Apple Metal (macOS)
+  mlx        Apple MLX (macOS)
+  cpu        CPU fallback
         """,
     )
 
+    parser.add_argument("input", nargs="?", help="Input PDF/DOCX file or directory")
+    parser.add_argument("-o", "--output", help="Output file/directory path")
+    parser.add_argument("--force-ocr", action="store_true", help="Force OCR (marker engine)")
+    parser.add_argument("--page-range", help="Page range, e.g. '0-5,10,15-20'")
     parser.add_argument(
-        "input",
-        nargs="?",
-        help="Input PDF/DOCX file or directory (with --batch)",
+        "--langs", default=DEFAULT_LANGS, help=f"Languages (default: {DEFAULT_LANGS})"
     )
+    parser.add_argument("--list-langs", action="store_true", help="List supported languages")
+    parser.add_argument("--list-devices", action="store_true", help="List available devices")
+    parser.add_argument("--list-engines", action="store_true", help="List available PDF engines")
+    parser.add_argument("--batch", action="store_true", help="Batch process directory")
+    parser.add_argument("-r", "--recursive", action="store_true", help="Recursive directory scan")
     parser.add_argument(
-        "-o",
-        "--output",
-        help="Output file path (single file) or directory (batch mode)",
-    )
-    parser.add_argument(
-        "--force-ocr",
-        action="store_true",
-        help="Force OCR even for digital PDFs with embedded text",
-    )
-    parser.add_argument(
-        "--page-range",
-        help="Page range to convert, e.g. '0-5,10,15-20'",
-    )
-    lang_codes = ", ".join(SUPPORTED_LANGUAGES.keys())
-    parser.add_argument(
-        "--langs",
-        default=DEFAULT_LANGS,
-        help=f"Comma-separated languages (default: {DEFAULT_LANGS}). Supported: {lang_codes}",
-    )
-    parser.add_argument(
-        "--list-langs",
-        action="store_true",
-        help="List all supported languages and exit",
-    )
-    parser.add_argument(
-        "--list-devices",
-        action="store_true",
-        help="List available acceleration devices and exit",
-    )
-    parser.add_argument(
-        "--batch",
-        action="store_true",
-        help="Process all PDF/DOCX files in the input directory",
-    )
-    parser.add_argument(
-        "--recursive",
-        "-r",
-        action="store_true",
-        help="Recursively process subdirectories (with --batch)",
+        "--engine",
+        default="auto",
+        choices=SUPPORTED_ENGINES,
+        help="PDF engine (auto/marker/mineru/docling/pymupdf/pdfplumber/llamaparse/mathpix)",
     )
     parser.add_argument(
         "--device",
         default="auto",
         choices=SUPPORTED_DEVICES,
-        help="Device for model inference (default: auto)",
+        help="GPU device (for marker/mineru/docling)",
     )
-    parser.add_argument(
-        "--low-vram",
-        action="store_true",
-        help="Enable low VRAM mode for GPUs with <8GB memory",
-    )
-    parser.add_argument(
-        "--gui",
-        action="store_true",
-        help="Launch PySide6 GUI mode",
-    )
-    parser.add_argument(
-        "-V",
-        "--version",
-        action="version",
-        version=f"NuoYi {__version__}",
-    )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Verbose output",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        dest="json_output",
-        help="Output results as JSON",
-    )
-    parser.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        help="Suppress non-essential output",
-    )
+    parser.add_argument("--low-vram", action="store_true", help="Low VRAM mode (<8GB)")
+    parser.add_argument("--gui", action="store_true", help="Launch GUI")
+    parser.add_argument("--web", action="store_true", help="Launch Web Interface")
+    parser.add_argument("--host", default="0.0.0.0", help="Web server host (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=5000, help="Web server port (default: 5000)")
+    parser.add_argument("-V", "--version", action="version", version=f"NuoYi {__version__}")
 
     args = parser.parse_args()
 
@@ -322,20 +283,40 @@ Notes:
         print("Supported languages:")
         for code, name in SUPPORTED_LANGUAGES.items():
             print(f"  {code:4s}  {name}")
-        print(f"\nDefault: {DEFAULT_LANGS}")
-        print(f'Usage:   nuoyi paper.pdf --langs "{DEFAULT_LANGS}"')
         sys.exit(0)
 
-    if args.list_devices:
-        print("Available acceleration devices:\n")
-        available = list_available_devices()
-        device_order = ["cuda", "rocm", "directml", "mps", "mlx", "vulkan", "openvino", "cpu"]
-        for device in device_order:
-            status = "[OK]" if device in available else "[--]"
-            desc = DEVICE_DESCRIPTIONS.get(device, "")
-            print(f"  {status} {device:10s}  {desc}")
-        print()
-        print_device_info()
+    if args.list_engines or args.list_devices:
+        from .converter import list_available_engines
+
+        engines = list_available_engines()
+        print("\n=== Available PDF Engines ===\n")
+        print(f"{'Engine':<12} {'Type':<8} {'GPU':<12} {'Status':<10} Notes")
+        print("-" * 70)
+        for name, info in engines.items():
+            status = "[OK]" if info["available"] else "[--]"
+            gpu = info.get("gpu", "N/A")
+            notes = info.get("notes", "")
+            print(f"{name:<12} {info['type']:<8} {gpu:<12} {status:<10} {notes}")
+
+        print("\nInstall commands:")
+        print("  pip install marker-pdf         # Best quality")
+        print("  pip install magic-pdf[full]    # MinerU (Chinese docs)")
+        print("  pip install docling            # Balanced")
+        print("  pip install pymupdf4llm        # Fastest")
+        print("  pip install pdfplumber         # Lightweight")
+        print("  pip install llama-parse        # Cloud (LLAMA_CLOUD_API_KEY)")
+        print("  pip install requests           # For Mathpix")
+
+        if args.list_devices:
+            print("\n=== Acceleration Devices ===\n")
+            available = list_available_devices()
+            device_order = ["cuda", "rocm", "directml", "mps", "mlx", "vulkan", "openvino", "cpu"]
+            for device in device_order:
+                status = "[OK]" if device in available else "[--]"
+                desc = DEVICE_DESCRIPTIONS.get(device, "")
+                print(f"  {status} {device:10s}  {desc}")
+            print_device_info()
+
         sys.exit(0)
 
     if args.gui:
@@ -343,9 +324,14 @@ Notes:
 
         run_gui()
 
+    if args.web:
+        from .web import run_web
+
+        run_web(host=args.host, port=args.port)
+
     if not args.input:
         parser.print_help()
-        print("\nError: Input file or directory is required (or use --gui).")
+        print("\nError: Input file or directory required.")
         sys.exit(1)
 
     input_path = Path(args.input)
@@ -354,44 +340,47 @@ Notes:
         sys.exit(1)
 
     force_ocr = args.force_ocr
-    page_range = args.page_range
+    page_range = args.page_range or None
     langs = args.langs
     device = args.device
     low_vram = args.low_vram
+    engine = args.engine
 
     if input_path.is_file():
         output_path = Path(args.output) if args.output else input_path.with_suffix(".md")
 
         print(f"Input:  {input_path}")
         print(f"Output: {output_path}")
-        print(f"Force OCR: {force_ocr}")
+        print(f"Engine: {engine}")
+        if engine in ("auto", "marker"):
+            print(f"Device: {device}")
+        if force_ocr:
+            print("Force OCR: True")
         if page_range:
             print(f"Page Range: {page_range}")
-        print(f"Languages: {langs}")
-        print(f"Device: {device}")
         if low_vram:
-            print("Low VRAM: Enabled")
+            print("Low VRAM: True")
         print()
 
-        convert_single_file(input_path, output_path, force_ocr, page_range, langs, device, low_vram)
+        convert_single_file(
+            input_path, output_path, force_ocr, page_range, langs, device, low_vram, engine
+        )
 
     elif input_path.is_dir():
         if not args.batch:
-            print(f"Error: {input_path} is a directory. Use --batch to process all files in it.")
+            print(f"Error: {input_path} is a directory. Use --batch to process.")
             sys.exit(1)
 
         output_dir = Path(args.output) if args.output else input_path
         print(f"Input dir:  {input_path}")
         print(f"Output dir: {output_dir}")
+        print(f"Engine: {engine}")
+        if engine in ("auto", "marker"):
+            print(f"Device: {device}")
         if args.recursive:
-            print(f"Recursive:  {args.recursive}")
-        print(f"Force OCR: {force_ocr}")
-        if page_range:
-            print(f"Page Range: {page_range}")
-        print(f"Languages: {langs}")
-        print(f"Device: {device}")
+            print("Recursive: True")
         if low_vram:
-            print("Low VRAM: Enabled")
+            print("Low VRAM: True")
         print()
 
         convert_directory(
@@ -402,6 +391,7 @@ Notes:
             langs,
             device,
             low_vram,
+            engine,
             args.recursive,
         )
 

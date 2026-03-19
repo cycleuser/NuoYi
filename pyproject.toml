@@ -47,14 +47,42 @@ dependencies = [
 gui = [
     "PySide6>=6.5.0",
 ]
+web = [
+    "flask>=2.0.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "build>=1.0.0",
     "twine>=4.0.0",
+    "ruff>=0.1.0",
 ]
+
+# PDF Engine optional dependencies
+mineru = [
+    "magic-pdf>=1.3.0",
+]
+docling = [
+    "docling>=1.0.0",
+]
+pymupdf = [
+    "pymupdf4llm>=0.0.5",
+]
+pdfplumber = [
+    "pdfplumber>=0.10.0",
+]
+
+# All local engines
+engines = [
+    "magic-pdf>=1.3.0",
+    "docling>=1.0.0",
+    "pymupdf4llm>=0.0.5",
+    "pdfplumber>=0.10.0",
+]
+
+# Everything (local engines only)
 all = [
-    "nuoyi[gui,dev]",
+    "nuoyi[gui,web,dev,engines]",
 ]
 
 [project.scripts]

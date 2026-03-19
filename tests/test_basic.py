@@ -7,7 +7,7 @@ def test_version():
     """Test that version is accessible."""
     from nuoyi import __version__
 
-    assert __version__ == "0.2.7"
+    assert __version__ == "0.3.0"
 
 
 def test_imports():

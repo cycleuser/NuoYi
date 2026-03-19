@@ -1,43 +1,52 @@
 """
 NuoYi - A simple tool to transform PDF and DOCX to Markdown.
 
-Fully offline conversion using marker-pdf (surya OCR + layout detection).
-Supports both CLI and PySide6 GUI interfaces.
+PDF Conversion Engines:
 
-Supported acceleration backends:
-- CUDA: NVIDIA GPUs (Linux, Windows)
-- ROCm: AMD GPUs via HIP (Linux)
-- DirectML: AMD/Intel/NVIDIA GPUs on Windows
-- MPS: Apple Silicon Metal Performance Shaders (macOS)
-- MLX: Apple MLX framework (macOS, experimental)
-- Vulkan: Cross-platform GPU acceleration
-- OpenVINO: Intel CPU/GPU optimization
+Local (free, offline):
+- marker: Best quality, OCR, ~3GB models, GPU recommended
+- mineru: Excellent for Chinese, OCR, ~1.5GB models, GPU optional
+- docling: Balanced, OCR, ~1.5GB models, GPU optional
+- pymupdf: Fastest, no GPU, no OCR
+- pdfplumber: Lightweight, good tables, no GPU, no OCR
+
+Cloud (API key required):
+- llamaparse: LlamaIndex cloud, excellent quality
+- mathpix: Best for math/scientific documents
+
+Acceleration backends (for marker/mineru/docling):
+- CUDA: NVIDIA GPUs
+- ROCm: AMD GPUs (Linux)
+- DirectML: AMD/Intel GPUs (Windows)
+- MPS: Apple Metal (macOS)
+- MLX: Apple MLX (macOS)
 - CPU: Universal fallback
 
 Usage:
-    # CLI - single file
+    # CLI - auto select engine
     nuoyi input.pdf -o output.md
 
-    # CLI - batch directory
-    nuoyi ./papers --batch
+    # CLI - use specific engine
+    nuoyi input.pdf --engine mineru
+    nuoyi input.pdf --engine pymupdf
 
-    # CLI - list available devices
-    nuoyi --list-devices
+    # CLI - list available engines
+    nuoyi --list-engines
 
     # GUI mode
     nuoyi --gui
 
-    # As Python module
-    from nuoyi import MarkerPDFConverter, DocxConverter
+    # Web mode
+    nuoyi --web
 
-    converter = MarkerPDFConverter()
+    # Python module
+    from nuoyi import get_converter
+
+    converter = get_converter(engine="mineru", device="mps")
     text, images = converter.convert_file("input.pdf")
-
-    # With specific device
-    converter = MarkerPDFConverter(device="directml", low_vram=True)
 """
 
-__version__ = "0.2.8"
+__version__ = "0.3.1"
 __author__ = "CycleUser"
 __license__ = "GPL-3.0"
 
@@ -49,6 +58,8 @@ from .api import (
 from .converter import (
     DocxConverter,
     MarkerPDFConverter,
+    get_converter,
+    list_available_engines,
 )
 from .utils import (
     DEFAULT_LANGS,
@@ -87,6 +98,8 @@ __all__ = [
     "__license__",
     "MarkerPDFConverter",
     "DocxConverter",
+    "get_converter",
+    "list_available_engines",
     "ToolResult",
     "api_convert_file",
     "api_convert_directory",

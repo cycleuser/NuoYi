@@ -40,6 +40,17 @@ DEFAULT_LANGS = "zh,en"
 
 SUPPORTED_DEVICES = ["auto", "cpu", "cuda", "rocm", "directml", "mps", "mlx", "vulkan", "openvino"]
 
+SUPPORTED_ENGINES = [
+    "auto",
+    "marker",
+    "mineru",
+    "docling",
+    "pymupdf",
+    "pdfplumber",
+    "llamaparse",
+    "mathpix",
+]
+
 
 def get_system_info() -> dict:
     """Get system information for device selection."""
