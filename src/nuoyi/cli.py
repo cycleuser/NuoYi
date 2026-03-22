@@ -14,7 +14,12 @@ Cloud (API key required):
 - llamaparse: LlamaIndex cloud, excellent quality
 - mathpix: Best for math/scientific documents
 
-Acceleration backends (for marker/mineru/docling):
+AMD GPU Support:
+- Windows: Use --device directml (AMD Radeon GPUs)
+- Linux: Use --device rocm (AMD Radeon GPUs)
+- Low VRAM: Use --low-vram for 4-6GB GPUs
+
+Acceleration backends:
 - CUDA: NVIDIA GPUs
 - ROCm: AMD GPUs (Linux)
 - DirectML: AMD/Intel GPUs (Windows)
@@ -24,6 +29,7 @@ Acceleration backends (for marker/mineru/docling):
 """
 
 import argparse
+import platform
 import sys
 from pathlib import Path
 
@@ -34,6 +40,7 @@ from .utils import (
     SUPPORTED_DEVICES,
     SUPPORTED_ENGINES,
     SUPPORTED_LANGUAGES,
+    is_amd_gpu_available,
     list_available_devices,
     print_device_info,
     save_images_and_update_markdown,
@@ -187,9 +194,9 @@ DEVICE_DESCRIPTIONS = {
 }
 
 ENGINE_DESCRIPTIONS = {
-    "marker": "Best quality, OCR, GPU recommended (~3GB)",
-    "mineru": "Great for Chinese, OCR, GPU optional (~1.5GB)",
-    "docling": "Balanced, OCR, GPU optional (~1.5GB)",
+    "marker": "Best quality, OCR, GPU recommended (~3GB) [AMD: DirectML/ROCm]",
+    "mineru": "Great for Chinese, OCR, GPU optional (~1.5GB) [AMD: ROCm]",
+    "docling": "Balanced, OCR, GPU optional (~1.5GB) [AMD: DirectML/ROCm]",
     "pymupdf": "Fastest, no GPU, no OCR",
     "pdfplumber": "Lightweight, good tables, no GPU, no OCR",
     "llamaparse": "Cloud, API key (LLAMA_CLOUD_API_KEY)",
@@ -201,9 +208,9 @@ def main():
     """Main entry point for NuoYi CLI."""
     parser = argparse.ArgumentParser(
         prog="nuoyi",
-        description="NuoYi - Convert PDF/DOCX to Markdown",
+        description="NuoYi - Convert PDF/DOCX to Markdown (with AMD GPU support)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+epilog="""
 Examples:
   nuoyi paper.pdf                        # Auto-select engine
   nuoyi paper.pdf --engine pymupdf       # Fast, no GPU
@@ -211,16 +218,20 @@ Examples:
   nuoyi paper.pdf --engine mineru        # Chinese docs
   nuoyi paper.pdf --engine llamaparse    # Cloud (needs API key)
   nuoyi paper.pdf --device cuda          # Use NVIDIA GPU
-  nuoyi paper.pdf --low-vram             # Low VRAM mode
+  nuoyi paper.pdf --device directml      # Use AMD GPU on Windows
+  nuoyi paper.pdf --device rocm          # Use AMD GPU on Linux
+  nuoyi paper.pdf --low-vram             # Low VRAM mode (4-6GB)
   nuoyi ./papers --batch                 # Batch directory
   nuoyi --gui                            # Launch GUI
   nuoyi --web                            # Launch Web Interface
   nuoyi --web --port 8080                # Web on port 8080
   nuoyi --list-engines                   # Show all engines
+  nuoyi --amd-info                       # Show AMD GPU info
 
 PDF Engines (Local, Free):
   marker     Best quality, OCR, layout detection
              Install: pip install marker-pdf
+             AMD Support: DirectML (Windows) / ROCm (Linux RDNA only)
   mineru     Excellent for Chinese documents
              Install: pip install magic-pdf[full]
   docling    Balanced quality, IBM
@@ -236,13 +247,27 @@ PDF Engines (Cloud, API key):
   mathpix    Math/scientific documents
              Set: export MATHPIX_APP_ID=xxx MATHPIX_APP_KEY=xxx
 
-Devices (for marker engine):
-  cuda       NVIDIA GPUs
-  rocm       AMD GPUs (Linux)
-  directml   AMD/Intel GPUs (Windows)
-  mps        Apple Metal (macOS)
-  mlx        Apple MLX (macOS)
-  cpu        CPU fallback
+AMD GPU Support (IMPORTANT for RX580/RX590):
+  Windows:   Use --device directml (ONLY option for AMD on Windows)
+             RX580, RX590, RX 6000/7000 series all work with DirectML
+             Install: pip install torch-directml
+  
+  Linux:     Use --device rocm (ONLY for RDNA GPUs: RX 5000/6000/7000)
+             RX580/RX590 (Polaris) are NOT supported by ROCm!
+             For RX580/RX590 on Linux: Use CPU or pymupdf engine
+
+  Low VRAM:  Use --low-vram for 4-6GB GPUs
+             RX580 8GB should work without --low-vram
+             RX580 4GB needs --low-vram flag
+
+DirectML Installation (Windows AMD):
+  pip install torch-directml
+  nuoyi input.pdf --device directml
+
+Low VRAM Tips (4-6GB):
+  - Use --low-vram flag
+  - Close other GPU applications
+  - Consider pymupdf for simpler documents
         """,
     )
 
@@ -256,6 +281,7 @@ Devices (for marker engine):
     parser.add_argument("--list-langs", action="store_true", help="List supported languages")
     parser.add_argument("--list-devices", action="store_true", help="List available devices")
     parser.add_argument("--list-engines", action="store_true", help="List available PDF engines")
+    parser.add_argument("--amd-info", action="store_true", help="Show detailed AMD GPU information")
     parser.add_argument("--batch", action="store_true", help="Batch process directory")
     parser.add_argument("-r", "--recursive", action="store_true", help="Recursive directory scan")
     parser.add_argument(
@@ -268,9 +294,9 @@ Devices (for marker engine):
         "--device",
         default="auto",
         choices=SUPPORTED_DEVICES,
-        help="GPU device (for marker/mineru/docling)",
+        help="GPU device: cuda (NVIDIA), directml (AMD Windows), rocm (AMD Linux), mps/mlx (Apple), cpu",
     )
-    parser.add_argument("--low-vram", action="store_true", help="Low VRAM mode (<8GB)")
+    parser.add_argument("--low-vram", action="store_true", help="Low VRAM mode (4-6GB GPUs)")
     parser.add_argument("--gui", action="store_true", help="Launch GUI")
     parser.add_argument("--web", action="store_true", help="Launch Web Interface")
     parser.add_argument("--host", default="0.0.0.0", help="Web server host (default: 0.0.0.0)")
@@ -285,18 +311,86 @@ Devices (for marker engine):
             print(f"  {code:4s}  {name}")
         sys.exit(0)
 
+    if args.amd_info:
+        print("\n" + "=" * 70)
+        print("AMD GPU Information")
+        print("=" * 70)
+
+        try:
+            from .directml_backend import (
+                get_directml_install_instructions,
+                is_polaris_gpu,
+                get_polaris_vram,
+                setup_directml_for_torch,
+                test_directml,
+            )
+
+            if platform.system().lower() == "windows":
+                print("\n[DirectML Status]")
+                config = setup_directml_for_torch()
+                print(f"  Available: {config.get('available', False)}")
+                if config.get("available"):
+                    print(f"  Device: {config.get('device_name', 'Unknown')}")
+                    print(f"  VRAM: {config.get('vram_gb', 0):.1f}GB")
+                    print(f"  Is Polaris: {config.get('is_polaris', False)}")
+
+                    if config.get("is_polaris"):
+                        print("\n[Polaris GPU Detected (RX 400/500 series)]")
+                        print(f"  This GPU: {config.get('device_name', 'Unknown')}")
+                        print(f"  VRAM: {config.get('vram_gb', 0):.1f}GB")
+                        print("  ROCm Support: NO (Polaris GPUs not supported)")
+                        print("  DirectML: REQUIRED for GPU acceleration")
+                        print("  Installation: pip install torch-directml")
+
+                    print("\n[DirectML Test]")
+                    test_directml()
+                else:
+                    print(f"  Error: {config.get('error', 'Unknown error')}")
+                    print(get_directml_install_instructions())
+            else:
+                print("\n[Linux System]")
+                print("  For AMD GPUs: Use --device rocm (RDNA GPUs only)")
+                print("  RX580/RX590: NOT supported by ROCm (Polaris architecture)")
+                print("  For RX580/RX590: Use CPU mode or pymupdf engine")
+
+        except ImportError:
+            print("DirectML backend module not available.")
+
+        print("\n[General AMD GPU Info]")
+        if is_amd_gpu_available():
+            print("  AMD GPU detected!")
+            from .utils import get_amd_gpu_info
+            amd_info = get_amd_gpu_info()
+            print(f"  Backend: {amd_info.get('backend', 'Unknown')}")
+            print(f"  Name: {amd_info.get('name', 'Unknown')}")
+            print(f"  VRAM: {amd_info.get('vram_gb', 0):.1f}GB")
+        else:
+            print("  No AMD GPU detected via standard APIs.")
+
+        print_device_info()
+        print("=" * 70)
+        sys.exit(0)
+
     if args.list_engines or args.list_devices:
         from .converter import list_available_engines
 
         engines = list_available_engines()
         print("\n=== Available PDF Engines ===\n")
         print(f"{'Engine':<12} {'Type':<8} {'GPU':<12} {'Status':<10} Notes")
-        print("-" * 70)
+        print("-" * 80)
         for name, info in engines.items():
             status = "[OK]" if info["available"] else "[--]"
             gpu = info.get("gpu", "N/A")
             notes = info.get("notes", "")
-            print(f"{name:<12} {info['type']:<8} {gpu:<12} {status:<10} {notes}")
+            amd = " [AMD]" if info.get("amd_support") else ""
+            print(f"{name:<12} {info['type']:<8} {gpu:<12} {status:<10} {notes}{amd}")
+
+        print("\n" + "=" * 80)
+        print("AMD GPU Support:")
+        print("  Windows: Use --device directml for AMD Radeon GPUs")
+        print("  Linux:   Use --device rocm for AMD Radeon GPUs")
+        print("  Low VRAM: Use --low-vram for 4-6GB GPUs")
+        print("=" * 80)
 
         print("\nInstall commands:")
         print("  pip install marker-pdf         # Best quality")
@@ -306,6 +400,10 @@ Devices (for marker engine):
         print("  pip install pdfplumber         # Lightweight")
         print("  pip install llama-parse        # Cloud (LLAMA_CLOUD_API_KEY)")
         print("  pip install requests           # For Mathpix")
+
+        print("\nAMD GPU Setup:")
+        print("  Windows: pip install torch-directml")
+        print("  Linux:   pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/rocm6.2")
 
         if args.list_devices:
             print("\n=== Acceleration Devices ===\n")
@@ -354,12 +452,12 @@ Devices (for marker engine):
         print(f"Engine: {engine}")
         if engine in ("auto", "marker"):
             print(f"Device: {device}")
+            if low_vram:
+                print("Low VRAM: True (optimized for 4-6GB)")
         if force_ocr:
             print("Force OCR: True")
         if page_range:
             print(f"Page Range: {page_range}")
-        if low_vram:
-            print("Low VRAM: True")
         print()
 
         convert_single_file(
@@ -377,10 +475,10 @@ Devices (for marker engine):
         print(f"Engine: {engine}")
         if engine in ("auto", "marker"):
             print(f"Device: {device}")
+            if low_vram:
+                print("Low VRAM: True (optimized for 4-6GB)")
         if args.recursive:
             print("Recursive: True")
-        if low_vram:
-            print("Low VRAM: True")
         print()
 
         convert_directory(

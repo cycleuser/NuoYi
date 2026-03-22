@@ -14,12 +14,24 @@ Cloud (API key required):
 - llamaparse: LlamaIndex cloud service, excellent quality
 - mathpix: Best for math/scientific documents
 
-Acceleration backends (for marker/mineru/docling):
+AMD GPU Support:
+- ROCm: AMD GPUs on Linux (RX 500/5000/6000/7000 series)
+- DirectML: AMD GPUs on Windows (all Radeon GPUs)
+- Vulkan: Experimental cross-platform support
+
+Acceleration backends:
 - CUDA: NVIDIA GPUs
-- ROCm: AMD GPUs (via HIP)
+- ROCm: AMD GPUs (via HIP on Linux)
+- DirectML: AMD/Intel/NVIDIA GPUs on Windows
 - MPS: Apple Silicon Metal
 - MLX: Apple MLX framework
 - CPU: Universal fallback
+
+Memory Optimization for Low VRAM (4-6GB):
+- Automatic batch size reduction
+- FP16/INT8 quantization
+- Model offloading
+- Aggressive garbage collection
 """
 
 from __future__ import annotations
@@ -30,12 +42,17 @@ from typing import TYPE_CHECKING
 
 from .utils import (
     DEFAULT_LANGS,
+    LOW_VRAM_THRESHOLD_GB,
     clean_markdown,
     clear_gpu_memory,
     clear_mlx_memory,
     enable_low_vram_mode,
     get_gpu_memory_info,
     get_recommended_batch_size,
+    get_rocm_memory_info,
+    is_amd_gpu_available,
+    is_directml_available,
+    is_rocm_available,
     select_device,
     setup_memory_optimization,
 )
@@ -65,29 +82,40 @@ ENGINE_INFO = {
         "gpu": "recommended",
         "models": "~3GB",
         "ocr": True,
-        "notes": "Best quality",
+        "notes": "Best quality, supports AMD via DirectML/ROCm",
+        "amd_support": True,
     },
     "mineru": {
         "type": "local",
         "gpu": "optional",
         "models": "~1.5GB",
         "ocr": True,
-        "notes": "Great for Chinese",
+        "notes": "Great for Chinese, supports AMD",
+        "amd_support": True,
     },
     "docling": {
         "type": "local",
         "gpu": "optional",
         "models": "~1.5GB",
         "ocr": True,
-        "notes": "Balanced",
+        "notes": "Balanced, supports AMD",
+        "amd_support": True,
     },
-    "pymupdf": {"type": "local", "gpu": "no", "models": "none", "ocr": False, "notes": "Fastest"},
+    "pymupdf": {
+        "type": "local",
+        "gpu": "no",
+        "models": "none",
+        "ocr": False,
+        "notes": "Fastest, CPU only",
+        "amd_support": True,
+    },
     "pdfplumber": {
         "type": "local",
         "gpu": "no",
         "models": "none",
         "ocr": False,
         "notes": "Lightweight",
+        "amd_support": True,
     },
     "llamaparse": {
         "type": "cloud",
@@ -95,6 +123,7 @@ ENGINE_INFO = {
         "models": "cloud",
         "ocr": True,
         "notes": "API key required",
+        "amd_support": True,
     },
     "mathpix": {
         "type": "cloud",
@@ -102,14 +131,17 @@ ENGINE_INFO = {
         "models": "cloud",
         "ocr": True,
         "notes": "Math specialist",
+        "amd_support": True,
     },
 }
 
-LOW_VRAM_THRESHOLD_GB = 8.0
-
 
 def _is_gpu_device(device: str) -> bool:
-    return device in ("cuda", "rocm", "mps")
+    return device in ("cuda", "rocm", "mps", "directml", "vulkan")
+
+
+def _is_vulkan_device(device: str) -> bool:
+    return device == "vulkan"
 
 
 def _is_mlx_device(device: str) -> bool:
@@ -117,24 +149,53 @@ def _is_mlx_device(device: str) -> bool:
 
 
 def _is_low_vram_device() -> bool:
+    """Check if current GPU has low VRAM (<6GB)."""
     try:
         import torch
 
         if not torch.cuda.is_available():
             return False
         total, _ = get_gpu_memory_info()
+        if total <= 0 and is_rocm_available():
+            total, _ = get_rocm_memory_info()
         return total < LOW_VRAM_THRESHOLD_GB
     except Exception:
         return False
 
 
 def _is_rocm_runtime() -> bool:
-    try:
-        import torch
+    """Check if running on ROCm runtime."""
+    return is_rocm_available()
 
-        return hasattr(torch.version, "hip") and torch.version.hip is not None
-    except Exception:
-        return False
+
+def _is_directml_runtime() -> bool:
+    """Check if running on DirectML runtime."""
+    return is_directml_available()
+
+
+def _is_amd_gpu() -> bool:
+    """Check if AMD GPU is available."""
+    return is_amd_gpu_available()
+
+
+def _get_amd_backend() -> str | None:
+    """Get the AMD backend being used (rocm, directml, or None)."""
+    if is_rocm_available():
+        return "rocm"
+    if is_directml_available():
+        return "directml"
+    return None
+
+
+def _setup_amd_environment():
+    """Set up environment for AMD GPU acceleration."""
+    if is_rocm_available():
+        os.environ["HSA_ENABLE_SDMA"] = "0"
+        if "HSA_OVERRIDE_GFX_VERSION" not in os.environ:
+            os.environ["HSA_OVERRIDE_GFX_VERSION"] = "10.3.0"
+
+    if is_directml_available():
+        pass
 
 
 class PyMuPDFConverter:
@@ -244,6 +305,8 @@ class DoclingConverter:
     OCR: Yes
     Models: ~1.5GB
     Install: pip install docling
+
+    AMD Support: Works with ROCm (Linux) and DirectML (Windows)
     """
 
     def __init__(self, device: str = "auto"):
@@ -288,6 +351,8 @@ class MinerUConverter:
     Models: ~1.5GB
     Install: pip install magic-pdf[full]
     GitHub: https://github.com/opendatalab/MinerU
+
+    AMD Support: Works with ROCm (Linux)
 
     Pros:
     - Excellent Chinese document support
@@ -355,13 +420,24 @@ class MinerUConverter:
 
 
 class MarkerPDFConverter:
-    """marker-pdf - best quality output.
+    """marker-pdf - best quality output with AMD GPU support.
 
     Type: Local, Free, Offline
-    GPU: Recommended (4GB+ VRAM)
+    GPU: Recommended (4GB+ VRAM), supports AMD via DirectML/ROCm
     OCR: Yes
     Models: ~3GB
     Install: pip install marker-pdf
+
+    AMD GPU Support:
+    - Windows: Use DirectML (--device directml)
+    - Linux: Use ROCm (--device rocm)
+    - RX580/RX590: 8GB VRAM - should work well
+    - 6GB VRAM: Use --low-vram flag
+
+    Memory Optimization for Low VRAM:
+    - Automatic batch size reduction
+    - FP16 precision
+    - Model offloading when needed
     """
 
     def __init__(
@@ -381,19 +457,80 @@ class MarkerPDFConverter:
         self.device = select_device(device)
         self.converter = None
         self.artifact_dict = None
+        self._amd_backend = _get_amd_backend()
 
         if self.low_vram or (_is_gpu_device(self.device) and _is_low_vram_device()):
             enable_low_vram_mode()
             self.low_vram = True
+            if batch_size is None:
+                self.batch_size = 1
 
+        _setup_amd_environment()
         self._setup_env()
         self._load_models()
 
     def _setup_env(self):
+        """Set up environment variables for GPU acceleration."""
         if _is_mlx_device(self.device):
             os.environ["MLX_DEVICE"] = "gpu"
+        elif _is_vulkan_device(self.device):
+            print(f"[Marker] Vulkan backend detected")
+            os.environ["TORCH_DEVICE"] = "vulkan"
+
+            try:
+                import torch
+
+                if hasattr(torch.backends, "vulkan") and torch.backends.vulkan.is_available():
+                    device_count = torch.backends.vulkan.num_vulkan_devices()
+                    print(f"[Marker] PyTorch Vulkan backend available: {device_count} device(s)")
+                    print(f"[Marker] Using Vulkan for AMD GPU acceleration")
+                else:
+                    print(f"[Marker] Warning: PyTorch Vulkan backend not compiled in")
+                    print(f"[Marker] Falling back to CPU mode")
+                    self.device = "cpu"
+                    os.environ["TORCH_DEVICE"] = "cpu"
+            except Exception as e:
+                print(f"[Marker] Vulkan check failed: {e}")
+                print(f"[Marker] Falling back to CPU mode")
+                self.device = "cpu"
+                os.environ["TORCH_DEVICE"] = "cpu"
         else:
             os.environ["TORCH_DEVICE"] = self.device
+
+        if self._amd_backend == "rocm":
+            os.environ["HSA_ENABLE_SDMA"] = "0"
+            if "HSA_OVERRIDE_GFX_VERSION" not in os.environ:
+                os.environ["HSA_OVERRIDE_GFX_VERSION"] = "10.3.0"
+            print(f"[Marker] AMD ROCm backend detected")
+
+        elif self._amd_backend == "directml":
+            print(f"[Marker] AMD DirectML backend detected")
+            print(f"[Marker] Patching PyTorch for DirectML...")
+
+            try:
+                from .directml_backend import (
+                    configure_marker_for_directml,
+                    is_polaris_gpu,
+                    patch_torch_for_directml,
+                )
+
+                patch_success = patch_torch_for_directml()
+                if patch_success:
+                    print(f"[Marker] PyTorch patched successfully for DirectML")
+                else:
+                    print(f"[Marker] Warning: Could not patch PyTorch for DirectML")
+
+                dml_config = configure_marker_for_directml(low_vram=self.low_vram)
+
+                if dml_config.get("is_polaris"):
+                    print(f"[Marker] Polaris GPU (RX400/500 series) detected")
+                    print(f"[Marker] RX580/RX590 use DirectML (no ROCm support)")
+
+                os.environ["TORCH_DEVICE"] = "cuda"
+
+            except ImportError as e:
+                print(f"[Marker] Warning: directml_backend not available: {e}")
+                os.environ["TORCH_DEVICE"] = "cuda"
 
     def _load_models(self):
         from marker.config.parser import ConfigParser
@@ -407,12 +544,23 @@ class MarkerPDFConverter:
             config["page_range"] = self.page_range
         if self.langs:
             config["languages"] = self.langs
+        if self.batch_size:
+            config["batch_size"] = self.batch_size
+
+        if self.low_vram:
+            config["batch_size"] = config.get("batch_size", 1)
 
         cp = ConfigParser(config)
         display = self._device_display()
 
         print(f"Loading marker-pdf models on {display}...")
         print("(First run downloads ~2-3 GB)")
+
+        if self._amd_backend:
+            print(f"[Marker] Using AMD acceleration via {self._amd_backend.upper()}")
+
+        if self.low_vram:
+            print("[Marker] Low VRAM mode enabled - optimized for 4-6GB GPUs")
 
         try:
             self._clear_mem()
@@ -443,7 +591,11 @@ class MarkerPDFConverter:
 
     def _device_display(self) -> str:
         if self.device == "cuda" and _is_rocm_runtime():
-            return "ROCm"
+            return "ROCm (AMD GPU)"
+        if self.device == "cuda" and _is_directml_runtime():
+            return "DirectML (AMD GPU)"
+        if self.device == "vulkan":
+            return "Vulkan (AMD GPU)"
         return {"mps": "MPS", "mlx": "MLX", "cpu": "CPU"}.get(self.device, self.device.upper())
 
     def _clear_mem(self):
@@ -634,8 +786,14 @@ def select_engine(engine: str = "auto", has_gpu: bool = True) -> str:
     if has_gpu:
         try:
             total, _ = get_gpu_memory_info()
+            if total <= 0 and is_rocm_available():
+                total, _ = get_rocm_memory_info()
+
             if total >= 4 and MarkerPDFConverter.is_available():
-                print("[Engine] Auto-selected: marker")
+                backend_info = ""
+                if _is_amd_gpu():
+                    backend_info = f" (AMD via {_get_amd_backend() or 'auto'})"
+                print(f"[Engine] Auto-selected: marker{backend_info}")
                 return "marker"
         except Exception:
             pass
@@ -670,7 +828,14 @@ def get_converter(
         page_range: Page range (marker only)
         langs: Languages for OCR
         device: GPU device (marker/docling)
-        low_vram: Low VRAM mode (marker)
+            - auto: Auto-detect best device
+            - cuda: NVIDIA GPU
+            - rocm: AMD GPU on Linux
+            - directml: AMD/Intel GPU on Windows
+            - mps: Apple Metal
+            - mlx: Apple MLX
+            - cpu: CPU only
+        low_vram: Low VRAM mode (<6GB)
         api_key: API key for LlamaParse
         app_id: App ID for Mathpix
         app_key: App key for Mathpix
@@ -714,17 +879,32 @@ def get_converter(
 
     if selected == "docling":
         if DoclingConverter.is_available():
-            print("[Converter] Using Docling (balanced)")
+            amd_info = ""
+            if _is_amd_gpu():
+                amd_info = f" (AMD via {_get_amd_backend()})"
+            print(f"[Converter] Using Docling (balanced){amd_info}")
             return DoclingConverter(device=device)
 
     if selected == "mineru":
         if MinerUConverter.is_available():
-            print("[Converter] Using MinerU (great for Chinese)")
+            amd_info = ""
+            if _is_amd_gpu():
+                amd_info = f" (AMD via {_get_amd_backend()})"
+            print(f"[Converter] Using MinerU (great for Chinese){amd_info}")
             return MinerUConverter(device=device, langs=langs)
 
     if selected == "marker":
         if MarkerPDFConverter.is_available():
-            print("[Converter] Using marker-pdf (best quality)")
+            amd_info = ""
+            if _is_amd_gpu():
+                backend = _get_amd_backend()
+                amd_info = f" (AMD via {backend.upper()})" if backend else ""
+
+            vram_info = ""
+            if low_vram:
+                vram_info = " [Low VRAM mode]"
+
+            print(f"[Converter] Using marker-pdf (best quality){amd_info}{vram_info}")
             return MarkerPDFConverter(
                 force_ocr=force_ocr,
                 page_range=page_range,
@@ -741,7 +921,10 @@ def get_converter(
         "  pip install pymupdf4llm        # Fastest, no GPU\n"
         "  pip install pdfplumber         # Lightweight\n"
         "  pip install llama-parse        # Cloud, API key\n"
-        "  pip install requests           # For Mathpix cloud"
+        "  pip install requests           # For Mathpix cloud\n"
+        "\nFor AMD GPUs:\n"
+        "  Windows: pip install torch-directml  # DirectML support\n"
+        "  Linux: Use ROCm PyTorch build        # ROCm support\n"
     )
 
 
@@ -783,8 +966,16 @@ def print_engines_info():
         avail = "[OK]" if info["available"] else "[--]"
         gpu = info.get("gpu", "N/A")
         notes = info.get("notes", "")
+        amd = " [AMD]" if info.get("amd_support") else ""
 
-        print(f"{name:<12} {info['type']:<8} {gpu:<12} {avail:<10} {notes}")
+        print(f"{name:<12} {info['type']:<8} {gpu:<12} {avail:<10} {notes}{amd}")
+
+    print("\n" + "=" * 70)
+    print("AMD GPU Support:")
+    print("  Windows: Use --device directml for AMD Radeon GPUs")
+    print("  Linux:   Use --device rocm for AMD Radeon GPUs")
+    print("  Low VRAM: Use --low-vram for 4-6GB GPUs")
+    print("=" * 70)
 
     print("\nInstall commands:")
     print("  pip install marker-pdf         # Best quality")
@@ -794,6 +985,11 @@ def print_engines_info():
     print("  pip install pdfplumber         # Lightweight")
     print("  pip install llama-parse        # Cloud (LLAMA_CLOUD_API_KEY)")
     print("  pip install requests           # For Mathpix (MATHPIX_APP_ID/KEY)")
+
+    print("\nAMD GPU Setup:")
+    print("  Windows: pip install torch-directml")
+    print("  Linux:   Install ROCm PyTorch from https://pytorch.org/get-started/locally/")
+    print("           pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/rocm6.2")
 
 
 class DocxConverter:
