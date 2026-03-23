@@ -427,17 +427,6 @@ class MarkerPDFConverter:
     OCR: Yes
     Models: ~3GB
     Install: pip install marker-pdf
-
-    AMD GPU Support:
-    - Windows: Use DirectML (--device directml)
-    - Linux: Use ROCm (--device rocm)
-    - RX580/RX590: 8GB VRAM - should work well
-    - 6GB VRAM: Use --low-vram flag
-
-    Memory Optimization for Low VRAM:
-    - Automatic batch size reduction
-    - FP16 precision
-    - Model offloading when needed
     """
 
     def __init__(
@@ -454,183 +443,25 @@ class MarkerPDFConverter:
         self.langs = langs
         self.low_vram = low_vram
         self.batch_size = batch_size
-        self.device = select_device(device)
         self.converter = None
         self.artifact_dict = None
-        self._amd_backend = _get_amd_backend()
-
-        if self.low_vram or (_is_gpu_device(self.device) and _is_low_vram_device()):
-            enable_low_vram_mode()
-            self.low_vram = True
-            if batch_size is None:
-                self.batch_size = 1
-
-        _setup_amd_environment()
-        self._setup_env()
+        self.device = "cuda"
         self._load_models()
 
-    def _setup_env(self):
-        """Set up environment variables for GPU acceleration."""
-        if _is_mlx_device(self.device):
-            os.environ["MLX_DEVICE"] = "gpu"
-        elif _is_vulkan_device(self.device):
-            print(f"[Marker] Vulkan backend detected")
-            os.environ["TORCH_DEVICE"] = "vulkan"
-
-            try:
-                import torch
-
-                if hasattr(torch.backends, "vulkan") and torch.backends.vulkan.is_available():
-                    device_count = torch.backends.vulkan.num_vulkan_devices()
-                    print(f"[Marker] PyTorch Vulkan backend available: {device_count} device(s)")
-                    print(f"[Marker] Using Vulkan for AMD GPU acceleration")
-                else:
-                    print(f"[Marker] Warning: PyTorch Vulkan backend not compiled in")
-                    print(f"[Marker] Falling back to CPU mode")
-                    self.device = "cpu"
-                    os.environ["TORCH_DEVICE"] = "cpu"
-            except Exception as e:
-                print(f"[Marker] Vulkan check failed: {e}")
-                print(f"[Marker] Falling back to CPU mode")
-                self.device = "cpu"
-                os.environ["TORCH_DEVICE"] = "cpu"
-        else:
-            os.environ["TORCH_DEVICE"] = self.device
-
-        if self._amd_backend == "rocm":
-            os.environ["HSA_ENABLE_SDMA"] = "0"
-            if "HSA_OVERRIDE_GFX_VERSION" not in os.environ:
-                os.environ["HSA_OVERRIDE_GFX_VERSION"] = "10.3.0"
-            print(f"[Marker] AMD ROCm backend detected")
-
-        elif self._amd_backend == "directml":
-            print(f"[Marker] AMD DirectML backend detected")
-            print(f"[Marker] Patching PyTorch for DirectML...")
-
-            try:
-                from .directml_backend import (
-                    configure_marker_for_directml,
-                    is_polaris_gpu,
-                    patch_torch_for_directml,
-                )
-
-                patch_success = patch_torch_for_directml()
-                if patch_success:
-                    print(f"[Marker] PyTorch patched successfully for DirectML")
-                else:
-                    print(f"[Marker] Warning: Could not patch PyTorch for DirectML")
-
-                dml_config = configure_marker_for_directml(low_vram=self.low_vram)
-
-                if dml_config.get("is_polaris"):
-                    print(f"[Marker] Polaris GPU (RX400/500 series) detected")
-                    print(f"[Marker] RX580/RX590 use DirectML (no ROCm support)")
-
-                os.environ["TORCH_DEVICE"] = "cuda"
-
-            except ImportError as e:
-                print(f"[Marker] Warning: directml_backend not available: {e}")
-                os.environ["TORCH_DEVICE"] = "cuda"
-
     def _load_models(self):
-        from marker.config.parser import ConfigParser
-        from marker.converters.pdf import PdfConverter
         from marker.models import create_model_dict
+        from marker.converters.pdf import PdfConverter
 
-        if _is_gpu_device(self.device):
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.init()
-                    torch.cuda.set_device(0)
-                    _ = torch.zeros(1, device="cuda")
-                    torch.cuda.synchronize()
-                    print("[Marker] CUDA context initialized successfully")
-            except Exception as e:
-                print(f"[Marker] Warning: CUDA init failed: {e}")
-
-        config = {"output_format": "markdown"}
-        if self.force_ocr:
-            config["force_ocr"] = True
-        if self.page_range:
-            config["page_range"] = self.page_range
-        if self.langs:
-            config["languages"] = self.langs
-        if self.batch_size:
-            config["batch_size"] = self.batch_size
-
-        if self.low_vram:
-            config["batch_size"] = config.get("batch_size", 1)
-
-        cp = ConfigParser(config)
-        display = self._device_display()
-
-        print(f"Loading marker-pdf models on {display}...")
+        print("Loading marker-pdf models...")
         print("(First run downloads ~2-3 GB)")
 
-        if self._amd_backend:
-            print(f"[Marker] Using AMD acceleration via {self._amd_backend.upper()}")
-
-        if self.low_vram:
-            print("[Marker] Low VRAM mode enabled - optimized for 4-6GB GPUs")
-
-        try:
-            self._clear_mem()
-            self.artifact_dict = create_model_dict()
-            self.converter = PdfConverter(
-                config=cp.generate_config_dict(),
-                artifact_dict=self.artifact_dict,
-                processor_list=cp.get_processors(),
-                renderer=cp.get_renderer(),
-            )
-            print(f"Models loaded on {display}.")
-
-        except RuntimeError as e:
-            if "out of memory" in str(e).lower() and _is_gpu_device(self.device):
-                print(f"[WARNING] OOM, falling back to CPU...")
-                self._clear_mem()
-                self.device = "cpu"
-                os.environ["TORCH_DEVICE"] = "cpu"
-                self.artifact_dict = create_model_dict()
-                self.converter = PdfConverter(
-                    config=cp.generate_config_dict(),
-                    artifact_dict=self.artifact_dict,
-                    processor_list=cp.get_processors(),
-                    renderer=cp.get_renderer(),
-                )
-            else:
-                raise
-
-    def _device_display(self) -> str:
-        if self.device == "cuda" and _is_rocm_runtime():
-            return "ROCm (AMD GPU)"
-        if self.device == "cuda" and _is_directml_runtime():
-            return "DirectML (AMD GPU)"
-        if self.device == "vulkan":
-            return "Vulkan (AMD GPU)"
-        return {"mps": "MPS", "mlx": "MLX", "cpu": "CPU"}.get(self.device, self.device.upper())
-
-    def _clear_mem(self):
-        if _is_mlx_device(self.device):
-            clear_mlx_memory()
-        else:
-            clear_gpu_memory()
-        gc.collect()
+        self.artifact_dict = create_model_dict()
+        self.converter = PdfConverter(artifact_dict=self.artifact_dict)
+        print("Models loaded.")
 
     def convert_file(self, pdf_path: str) -> tuple[str, dict]:
         from marker.output import text_from_rendered
 
-        if _is_gpu_device(self.device):
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-            except Exception:
-                pass
-
-        self._clear_mem()
         rendered = self.converter(pdf_path)
         text, _, images = text_from_rendered(rendered)
         return clean_markdown(text), images or {}
