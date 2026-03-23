@@ -32,6 +32,28 @@ pip install nuoyi
 pip install nuoyi[gui]
 ```
 
+### With NVIDIA CUDA support (IMPORTANT for GPU users)
+
+If you encounter `CUBLAS_STATUS_NOT_INITIALIZED` errors when using GPU, install the CUDA libraries:
+
+```bash
+pip install nuoyi[cuda]
+```
+
+Or manually:
+
+```bash
+pip install nvidia-cublas nvidia-cuda-runtime nvidia-cufft nvidia-cusolver nvidia-cusparse nvidia-curand nvidia-cuda-nvrtc nvidia-nvtx
+```
+
+**Why is this needed?** PyTorch's CUDA packages sometimes don't include all required NVIDIA libraries. The `nvidia-*` packages ensure complete CUDA library installation for marker-pdf to work properly.
+
+### Full installation with all features
+
+```bash
+pip install nuoyi[all-cuda]
+```
+
 ### From source
 
 ```bash

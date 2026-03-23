@@ -9,6 +9,26 @@ PyMuPDF>=1.23.0             # PDF page counting and rendering
 python-docx>=0.8.11         # DOCX document conversion
 Pillow>=9.0.0               # Image processing
 
+# ── NVIDIA CUDA Libraries (IMPORTANT for GPU acceleration) ────────────────────
+# These are required for marker-pdf to work with GPU on NVIDIA cards.
+# Without these, you may see "CUBLAS_STATUS_NOT_INITIALIZED" errors.
+#
+# IMPORTANT: PyTorch 2.10+ installs nvidia-*-cu13 packages, but some libraries
+# (surya, transformers) need nvidia-*-cu12 packages for module path discovery.
+# This ensures both cu12 and cu13 paths are available.
+#
+# Install with: pip install nuoyi[cuda]
+# Or manually install the cu12 packages:
+nvidia-cublas-cu12>=12.0.0
+nvidia-cuda-runtime-cu12>=12.0.0
+nvidia-cufft-cu12>=11.0.0
+nvidia-cusolver-cu12>=11.0.0
+nvidia-cusparse-cu12>=12.0.0
+nvidia-curand-cu12>=10.0.0
+nvidia-cuda-nvrtc-cu12>=12.0.0
+nvidia-nvtx-cu12>=12.0.0
+nvidia-nvjitlink-cu12>=12.0.0
+
 # ── PDF Engines (Local, Offline) ───────────────────────────────────────────────
 
 # marker (default, best quality) - already included above

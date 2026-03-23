@@ -1166,6 +1166,17 @@ def clean_markdown(text: str) -> str:
     return text.strip()
 
 
+def _encode_markdown_path(path: str) -> str:
+    """Encode path for markdown image reference, handling spaces.
+
+    Uses angle brackets which is the most compatible way to handle
+    paths with spaces in markdown image references.
+    """
+    if " " in path:
+        return f"<{path}>"
+    return path
+
+
 def save_images_and_update_markdown(
     markdown_text: str, images: dict, output_dir: Path, images_subdir: str = "images"
 ) -> str:
@@ -1211,20 +1222,25 @@ def save_images_and_update_markdown(
     updated_text = markdown_text
 
     for img_name in images.keys():
+        new_path = f"{images_subdir}/{img_name}"
+        encoded_path = _encode_markdown_path(new_path)
+
         old_ref = f"]({img_name})"
-        new_ref = f"]({images_subdir}/{img_name})"
+        new_ref = f"]({encoded_path})"
         if old_ref in updated_text:
             updated_text = updated_text.replace(old_ref, new_ref)
 
         old_ref = f"](./{img_name})"
-        new_ref = f"]({images_subdir}/{img_name})"
+        new_ref = f"]({encoded_path})"
         if old_ref in updated_text:
             updated_text = updated_text.replace(old_ref, new_ref)
 
         base_name = Path(img_name).name
         if base_name != img_name:
             old_ref = f"]({img_name})"
-            new_ref = f"]({images_subdir}/{base_name})"
+            new_path = f"{images_subdir}/{base_name}"
+            encoded_path = _encode_markdown_path(new_path)
+            new_ref = f"]({encoded_path})"
             if old_ref in updated_text:
                 updated_text = updated_text.replace(old_ref, new_ref)
 

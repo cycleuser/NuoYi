@@ -32,6 +32,28 @@ pip install nuoyi
 pip install nuoyi[gui]
 ```
 
+### 安装 NVIDIA CUDA 支持（GPU 用户重要）
+
+如果在使用 GPU 时遇到 `CUBLAS_STATUS_NOT_INITIALIZED` 错误，请安装 CUDA 库：
+
+```bash
+pip install nuoyi[cuda]
+```
+
+或手动安装：
+
+```bash
+pip install nvidia-cublas nvidia-cuda-runtime nvidia-cufft nvidia-cusolver nvidia-cusparse nvidia-curand nvidia-cuda-nvrtc nvidia-nvtx
+```
+
+**为什么需要这些？** PyTorch 的 CUDA 包有时不包含所有必需的 NVIDIA 库。`nvidia-*` 包确保 marker-pdf 能正确使用 GPU 加速。
+
+### 完整安装（包含所有功能）
+
+```bash
+pip install nuoyi[all-cuda]
+```
+
 ### 从源码安装
 
 ```bash

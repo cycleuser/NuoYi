@@ -62,6 +62,29 @@ dev = [
     "ruff>=0.1.0",
 ]
 
+# NVIDIA CUDA support - ensures complete CUDA library installation
+# Required for marker-pdf to work properly with GPU acceleration
+#
+# IMPORTANT: PyTorch 2.10+ installs nvidia-*-cu13 packages, but some libraries
+# (surya, transformers) need nvidia-*-cu12 packages for module path discovery.
+# This ensures both cu12 and cu13 paths are available.
+#
+# Install with: pip install nuoyi[cuda]
+# Or: pip install nuoyi[all-cuda] for complete installation
+cuda = [
+    # cu12 packages - provide nvidia/cublas/, nvidia/cuda_runtime/, etc. paths
+    # Required for surya/transformers to find CUDA libraries via import
+    "nvidia-cublas-cu12>=12.0.0",
+    "nvidia-cuda-runtime-cu12>=12.0.0",
+    "nvidia-cufft-cu12>=11.0.0",
+    "nvidia-cusolver-cu12>=11.0.0",
+    "nvidia-cusparse-cu12>=12.0.0",
+    "nvidia-curand-cu12>=10.0.0",
+    "nvidia-cuda-nvrtc-cu12>=12.0.0",
+    "nvidia-nvtx-cu12>=12.0.0",
+    "nvidia-nvjitlink-cu12>=12.0.0",
+]
+
 # AMD GPU support - install manually after torch is installed
 # pip install torch-directml
 # See AMD_GPU_SETUP.md for details
@@ -91,6 +114,11 @@ engines = [
 # Everything (local engines)
 all = [
     "nuoyi[gui,web,dev,engines]",
+]
+
+# Everything with CUDA support
+all-cuda = [
+    "nuoyi[gui,web,dev,engines,cuda]",
 ]
 
 [project.scripts]
