@@ -233,12 +233,21 @@ def _estimate_vram_from_gpu_name(name: str) -> float:
     name_upper = name.upper()
 
     vram_patterns = {
-        "8GB": 8.0, " 8G": 8.0, " 8 GB": 8.0,
-        "6GB": 6.0, " 6G": 6.0, " 6 GB": 6.0,
-        "12GB": 12.0, " 12G": 12.0,
-        "16GB": 16.0, " 16G": 16.0, " 16 GB": 16.0,
-        "4GB": 4.0, " 4G": 4.0,
-        "20GB": 20.0, "24GB": 24.0,
+        "8GB": 8.0,
+        " 8G": 8.0,
+        " 8 GB": 8.0,
+        "6GB": 6.0,
+        " 6G": 6.0,
+        " 6 GB": 6.0,
+        "12GB": 12.0,
+        " 12G": 12.0,
+        "16GB": 16.0,
+        " 16G": 16.0,
+        " 16 GB": 16.0,
+        "4GB": 4.0,
+        " 4G": 4.0,
+        "20GB": 20.0,
+        "24GB": 24.0,
     }
 
     for pattern, vram in vram_patterns.items():
@@ -246,18 +255,39 @@ def _estimate_vram_from_gpu_name(name: str) -> float:
             return vram
 
     known_vram = {
-        "RX 580": 8.0, "RX 590": 8.0, "RX 570": 4.0,
-        "RX 480": 8.0, "RX 470": 4.0,
-        "RX 5600 XT": 6.0, "RX 5700": 8.0, "RX 5700 XT": 8.0,
-        "RX 6600": 8.0, "RX 6600 XT": 8.0, "RX 6700 XT": 12.0,
-        "RX 6800": 16.0, "RX 6800 XT": 16.0, "RX 6900 XT": 16.0,
-        "RX 7600": 8.0, "RX 7700 XT": 12.0, "RX 7800 XT": 16.0,
-        "RX 7900 XT": 20.0, "RX 7900 XTX": 24.0,
-        "VEGA 56": 8.0, "VEGA 64": 8.0,
-        "GTX 1060": 6.0, "GTX 1070": 8.0, "GTX 1080": 8.0,
-        "RTX 2060": 6.0, "RTX 2070": 8.0, "RTX 2080": 8.0,
-        "RTX 3060": 12.0, "RTX 3070": 8.0, "RTX 3080": 10.0,
-        "RTX 4060": 8.0, "RTX 4070": 12.0, "RTX 4080": 16.0,
+        "RX 580": 8.0,
+        "RX 590": 8.0,
+        "RX 570": 4.0,
+        "RX 480": 8.0,
+        "RX 470": 4.0,
+        "RX 5600 XT": 6.0,
+        "RX 5700": 8.0,
+        "RX 5700 XT": 8.0,
+        "RX 6600": 8.0,
+        "RX 6600 XT": 8.0,
+        "RX 6700 XT": 12.0,
+        "RX 6800": 16.0,
+        "RX 6800 XT": 16.0,
+        "RX 6900 XT": 16.0,
+        "RX 7600": 8.0,
+        "RX 7700 XT": 12.0,
+        "RX 7800 XT": 16.0,
+        "RX 7900 XT": 20.0,
+        "RX 7900 XTX": 24.0,
+        "VEGA 56": 8.0,
+        "VEGA 64": 8.0,
+        "GTX 1060": 6.0,
+        "GTX 1070": 8.0,
+        "GTX 1080": 8.0,
+        "RTX 2060": 6.0,
+        "RTX 2070": 8.0,
+        "RTX 2080": 8.0,
+        "RTX 3060": 12.0,
+        "RTX 3070": 8.0,
+        "RTX 3080": 10.0,
+        "RTX 4060": 8.0,
+        "RTX 4070": 12.0,
+        "RTX 4080": 16.0,
     }
 
     for gpu_model, vram in known_vram.items():
@@ -309,6 +339,147 @@ def clear_all_gpu_memory():
     clear_mlx_memory()
     clear_directml_memory()
     gc.collect()
+
+
+def get_cuda_processes() -> list[dict]:
+    """Get list of processes using CUDA GPU.
+
+    Returns:
+        List of dicts with pid, name, memory info for each process
+    """
+    processes = []
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,process_name,used_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().split("\n"):
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 3:
+                    try:
+                        processes.append(
+                            {
+                                "pid": int(parts[0]),
+                                "name": parts[1],
+                                "memory_mb": float(parts[2]),
+                            }
+                        )
+                    except (ValueError, IndexError):
+                        continue
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        pass
+    return processes
+
+
+def kill_cuda_processes(pids: list[int]) -> tuple[list[int], list[int]]:
+    """Kill processes by PID.
+
+    Args:
+        pids: List of process IDs to kill
+
+    Returns:
+        Tuple of (killed_pids, failed_pids)
+    """
+    import signal
+
+    killed = []
+    failed = []
+
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed.append(pid)
+        except (ProcessLookupError, PermissionError, OSError):
+            failed.append(pid)
+
+    return killed, failed
+
+
+def prompt_kill_cuda_processes(min_free_vram_gb: float = 4.0) -> bool:
+    """Check GPU memory and prompt user to kill conflicting processes.
+
+    Args:
+        min_free_vram_gb: Minimum free VRAM required in GB
+
+    Returns:
+        True if OK to proceed, False if user cancelled or error
+    """
+    total, free = get_gpu_memory_info()
+
+    if total == 0:
+        return True
+
+    processes = get_cuda_processes()
+
+    if not processes and free >= min_free_vram_gb:
+        return True
+
+    print("\n" + "=" * 60)
+    print("GPU Memory Status")
+    print("=" * 60)
+    print(f"Total VRAM:  {total:.1f} GB")
+    print(f"Free VRAM:   {free:.1f} GB")
+    print(f"Required:    {min_free_vram_gb:.1f} GB")
+
+    if processes:
+        print(f"\nProcesses using GPU ({len(processes)}):")
+        print(f"{'PID':>8}  {'Name':<40}  {'Memory':>10}")
+        print("-" * 60)
+        for p in processes:
+            print(f"{p['pid']:>8}  {p['name'][:40]:<40}  {p['memory_mb']:>8.0f} MB")
+    else:
+        print("\nNo external GPU processes detected.")
+        print(f"Free VRAM ({free:.1f}GB) is below recommended ({min_free_vram_gb}GB).")
+        print("Consider closing other GPU-intensive applications.")
+
+    print("=" * 60)
+
+    if processes:
+        try:
+            response = input("\nKill these processes to free GPU memory? [y/N]: ").strip().lower()
+            if response in ("y", "yes"):
+                pids_to_kill = [p["pid"] for p in processes]
+                print(f"\nAttempting to kill {len(pids_to_kill)} process(es)...")
+
+                killed, failed = kill_cuda_processes(pids_to_kill)
+
+                if killed:
+                    print(f"Killed: {killed}")
+                if failed:
+                    print(f"Failed to kill (permission denied?): {failed}")
+
+                import time
+
+                time.sleep(1)
+
+                total, free = get_gpu_memory_info()
+                print("\nUpdated GPU Status:")
+                print(f"  Free VRAM: {free:.1f} GB")
+
+                clear_gpu_memory()
+                return True
+            else:
+                print("Cancelled. Proceeding without killing processes...")
+                return True
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled by user.")
+            return False
+    else:
+        try:
+            response = input("\nContinue anyway? [Y/n]: ").strip().lower()
+            if response in ("n", "no"):
+                return False
+            return True
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled by user.")
+            return False
 
 
 def is_cuda_available() -> bool:
@@ -404,10 +575,7 @@ def is_torch_vulkan_available() -> bool:
     try:
         import torch
 
-        return (
-            hasattr(torch.backends, "vulkan")
-            and torch.backends.vulkan.is_available()
-        )
+        return hasattr(torch.backends, "vulkan") and torch.backends.vulkan.is_available()
     except Exception:
         return False
 
@@ -417,7 +585,9 @@ def get_torch_vulkan_device_count() -> int:
     try:
         import torch
 
-        if hasattr(torch.backends, "vulkan") and hasattr(torch.backends.vulkan, "num_vulkan_devices"):
+        if hasattr(torch.backends, "vulkan") and hasattr(
+            torch.backends.vulkan, "num_vulkan_devices"
+        ):
             return torch.backends.vulkan.num_vulkan_devices()
     except Exception:
         pass
@@ -516,7 +686,9 @@ def get_amd_gpu_info() -> dict:
             import torch_directml
 
             name = torch_directml.device_name(torch_directml.device())
-            if name and any(amd_id in name.upper() for amd_id in ["AMD", "RADEON", "RX", "VEGA", "NAVI"]):
+            if name and any(
+                amd_id in name.upper() for amd_id in ["AMD", "RADEON", "RX", "VEGA", "NAVI"]
+            ):
                 info["available"] = True
                 info["backend"] = "directml"
                 info["name"] = name
@@ -629,7 +801,11 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
             print(f"[Device] Vulkan devices: {vulkan_devices}")
             print(f"[Device] Device count: {device_count}")
 
-            amd_devices = [d for d in vulkan_devices if "AMD" in d.upper() or "RADEON" in d.upper() or "RX" in d.upper()]
+            amd_devices = [
+                d
+                for d in vulkan_devices
+                if "AMD" in d.upper() or "RADEON" in d.upper() or "RX" in d.upper()
+            ]
             if amd_devices:
                 print(f"[Device] AMD GPU(s) detected: {amd_devices}")
                 print(f"[Device] Using Vulkan for AMD GPU acceleration")
@@ -641,7 +817,9 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
             print(f"[Device] System Vulkan available: {vulkan_devices}")
             print(f"[Device] PyTorch Vulkan backend NOT compiled in")
             print(f"[Device]")
-            print(f"[Device] To use Vulkan with PyTorch, you need to compile PyTorch with Vulkan support:")
+            print(
+                f"[Device] To use Vulkan with PyTorch, you need to compile PyTorch with Vulkan support:"
+            )
             print(f"[Device]   1. Run: scripts\\build_vulkan_pytorch.ps1")
             print(f"[Device]   Or see: BUILD_VULKAN_PYTORCH.md")
             print(f"[Device]")
@@ -673,7 +851,11 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
             print(f"[Device] Using DirectML: {device_name}")
 
             try:
-                from .directml_backend import is_polaris_gpu, get_polaris_vram, configure_marker_for_directml
+                from .directml_backend import (
+                    is_polaris_gpu,
+                    get_polaris_vram,
+                    configure_marker_for_directml,
+                )
 
                 if is_polaris_gpu(device_name):
                     vram = get_polaris_vram(device_name)
@@ -691,7 +873,9 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
                 else:
                     total_vram = _estimate_vram_from_gpu_name(device_name or "")
                     if total_vram <= LOW_VRAM_THRESHOLD_GB:
-                        print(f"[Device] Low VRAM detected ({total_vram:.1f}GB), enabling optimizations...")
+                        print(
+                            f"[Device] Low VRAM detected ({total_vram:.1f}GB), enabling optimizations..."
+                        )
                         enable_low_vram_mode()
                     configure_marker_for_directml(low_vram=(total_vram <= LOW_VRAM_THRESHOLD_GB))
 
@@ -774,14 +958,14 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
 
         if device_info["directml"]["available"]:
             print(f"[Device] DirectML device found: {device_info['directml']['name']}")
-            is_amd = device_info['directml'].get('is_amd', False)
+            is_amd = device_info["directml"].get("is_amd", False)
 
             if is_amd:
                 print("[Device] Auto-selected: DirectML (AMD GPU)")
             else:
                 print("[Device] Auto-selected: DirectML")
 
-            vram = _estimate_vram_from_gpu_name(device_info['directml']['name'] or "")
+            vram = _estimate_vram_from_gpu_name(device_info["directml"]["name"] or "")
             if vram <= LOW_VRAM_THRESHOLD_GB:
                 enable_low_vram_mode()
 
@@ -906,27 +1090,33 @@ def print_device_info():
         print("ROCm:      [--] Not available")
 
     if info["directml"]["available"]:
-        is_amd = info['directml'].get('is_amd', False)
+        is_amd = info["directml"].get("is_amd", False)
         amd_marker = " (AMD)" if is_amd else ""
         print(f"DirectML:  [OK] {info['directml']['name']}{amd_marker}")
     else:
         print("DirectML:  [--] Not available")
 
-    print(f"MPS:       [{'OK' if info['mps']['available'] else '--'}] {'Available' if info['mps']['available'] else 'Not available'}")
-    print(f"MLX:       [{'OK' if info['mlx']['available'] else '--'}] {'Available' if info['mlx']['available'] else 'Not available'}")
+    print(
+        f"MPS:       [{'OK' if info['mps']['available'] else '--'}] {'Available' if info['mps']['available'] else 'Not available'}"
+    )
+    print(
+        f"MLX:       [{'OK' if info['mlx']['available'] else '--'}] {'Available' if info['mlx']['available'] else 'Not available'}"
+    )
 
     if info["vulkan"]["available"]:
         print(f"Vulkan:    [OK] {info['vulkan']['devices']}")
     else:
         print("Vulkan:    [--] Not available")
 
-    print(f"OpenVINO:  [{'OK' if info['openvino']['available'] else '--'}] {'Available' if info['openvino']['available'] else 'Not available'}")
+    print(
+        f"OpenVINO:  [{'OK' if info['openvino']['available'] else '--'}] {'Available' if info['openvino']['available'] else 'Not available'}"
+    )
     print("=" * 60)
 
     print("\nRecommendations:")
     if info["system"]["is_windows"]:
         if info["directml"]["available"]:
-            is_amd = info['directml'].get('is_amd', False)
+            is_amd = info["directml"].get("is_amd", False)
             if is_amd:
                 print("  - Use --device directml for AMD GPU (RECOMMENDED)")
                 print("  - For RX580/RX590 with 8GB VRAM: marker-pdf should work well")

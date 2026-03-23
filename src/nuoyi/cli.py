@@ -43,6 +43,7 @@ from .utils import (
     is_amd_gpu_available,
     list_available_devices,
     print_device_info,
+    prompt_kill_cuda_processes,
     save_images_and_update_markdown,
 )
 
@@ -210,7 +211,7 @@ def main():
         prog="nuoyi",
         description="NuoYi - Convert PDF/DOCX to Markdown (with AMD GPU support)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-epilog="""
+        epilog="""
 Examples:
   nuoyi paper.pdf                        # Auto-select engine
   nuoyi paper.pdf --engine pymupdf       # Fast, no GPU
@@ -360,6 +361,7 @@ Low VRAM Tips (4-6GB):
         if is_amd_gpu_available():
             print("  AMD GPU detected!")
             from .utils import get_amd_gpu_info
+
             amd_info = get_amd_gpu_info()
             print(f"  Backend: {amd_info.get('backend', 'Unknown')}")
             print(f"  Name: {amd_info.get('name', 'Unknown')}")
@@ -403,7 +405,9 @@ Low VRAM Tips (4-6GB):
 
         print("\nAMD GPU Setup:")
         print("  Windows: pip install torch-directml")
-        print("  Linux:   pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/rocm6.2")
+        print(
+            "  Linux:   pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/rocm6.2"
+        )
 
         if args.list_devices:
             print("\n=== Acceleration Devices ===\n")
@@ -443,6 +447,18 @@ Low VRAM Tips (4-6GB):
     device = args.device
     low_vram = args.low_vram
     engine = args.engine
+
+    should_check_cuda = device in ("auto", "cuda") and engine in (
+        "auto",
+        "marker",
+        "mineru",
+        "docling",
+    )
+    if should_check_cuda:
+        min_vram = 3.0 if low_vram else 5.0
+        if not prompt_kill_cuda_processes(min_free_vram_gb=min_vram):
+            print("Aborted.")
+            sys.exit(0)
 
     if input_path.is_file():
         output_path = Path(args.output) if args.output else input_path.with_suffix(".md")

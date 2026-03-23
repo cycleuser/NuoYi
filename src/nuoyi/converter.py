@@ -537,6 +537,19 @@ class MarkerPDFConverter:
         from marker.converters.pdf import PdfConverter
         from marker.models import create_model_dict
 
+        if _is_gpu_device(self.device):
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.init()
+                    torch.cuda.set_device(0)
+                    _ = torch.zeros(1, device="cuda")
+                    torch.cuda.synchronize()
+                    print("[Marker] CUDA context initialized successfully")
+            except Exception as e:
+                print(f"[Marker] Warning: CUDA init failed: {e}")
+
         config = {"output_format": "markdown"}
         if self.force_ocr:
             config["force_ocr"] = True
@@ -607,6 +620,15 @@ class MarkerPDFConverter:
 
     def convert_file(self, pdf_path: str) -> tuple[str, dict]:
         from marker.output import text_from_rendered
+
+        if _is_gpu_device(self.device):
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+            except Exception:
+                pass
 
         self._clear_mem()
         rendered = self.converter(pdf_path)
@@ -989,7 +1011,9 @@ def print_engines_info():
     print("\nAMD GPU Setup:")
     print("  Windows: pip install torch-directml")
     print("  Linux:   Install ROCm PyTorch from https://pytorch.org/get-started/locally/")
-    print("           pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/rocm6.2")
+    print(
+        "           pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/rocm6.2"
+    )
 
 
 class DocxConverter:

@@ -110,6 +110,21 @@ class ConverterWorker(QThread):
         self.log_signal.emit(f"Starting processing of {len(self.files)} files...")
         self.log_signal.emit(f"Engine: {self.engine}, Device: {self.device}")
 
+        if self.device in ("cuda", "auto") or self.engine in ("marker", "mineru", "docling"):
+            try:
+                import torch
+                import os
+
+                os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+                if torch.cuda.is_available():
+                    torch.cuda.set_device(0)
+                    torch.cuda.init()
+                    _ = torch.zeros(1, device="cuda")
+                    torch.cuda.synchronize()
+                    self.log_signal.emit("[GPU] CUDA context initialized in worker thread")
+            except Exception as e:
+                self.log_signal.emit(f"[GPU] Warning: CUDA init in thread: {e}")
+
         pdf_converter = None
         docx_converter = None
 
