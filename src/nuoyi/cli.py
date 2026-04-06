@@ -108,6 +108,7 @@ def convert_directory(
     engine: str = "auto",
     recursive: bool = False,
     disable_ocr_models: bool = False,
+    existing_files: str = "ask",
 ):
     """Batch convert all PDF/DOCX files in a directory with optimized memory."""
 
@@ -123,6 +124,7 @@ def convert_directory(
         device=device,
         recursive=recursive,
         disable_ocr_models=disable_ocr_models,
+        existing_files=existing_files,
     )
 
     if not result.success:
@@ -177,6 +179,10 @@ Examples:
   nuoyi paper.pdf --device rocm          # Use AMD GPU on Linux
   nuoyi paper.pdf --low-vram             # Low VRAM mode (4-6GB)
   nuoyi ./papers --batch                 # Batch directory
+  nuoyi ./papers --batch --existing-files overwrite  # Overwrite all
+  nuoyi ./papers --batch --existing-files skip      # Skip existing
+  nuoyi ./papers --batch --existing-files update    # Only newer files
+  nuoyi ./papers --batch --existing-files ask       # Interactive prompt
   nuoyi --gui                            # Launch GUI
   nuoyi --web                            # Launch Web Interface
   nuoyi --web --port 8080                # Web on port 8080
@@ -206,7 +212,7 @@ AMD GPU Support (IMPORTANT for RX580/RX590):
   Windows:   Use --device directml (ONLY option for AMD on Windows)
              RX580, RX590, RX 6000/7000 series all work with DirectML
              Install: pip install torch-directml
-  
+
   Linux:     Use --device rocm (ONLY for RDNA GPUs: RX 5000/6000/7000)
              RX580/RX590 (Polaris) are NOT supported by ROCm!
              For RX580/RX590 on Linux: Use CPU or pymupdf engine
@@ -256,6 +262,12 @@ Low VRAM Tips (4-6GB):
         "--disable-ocr-models",
         action="store_true",
         help="Disable OCR models for marker (saves ~1.5GB VRAM, for digital PDFs only)",
+    )
+    parser.add_argument(
+        "--existing-files",
+        choices=["ask", "overwrite", "skip", "update"],
+        default="ask",
+        help="How to handle existing output files: ask (interactive), overwrite, skip, or update (only if source is newer)",
     )
     parser.add_argument("--gui", action="store_true", help="Launch GUI")
     parser.add_argument("--web", action="store_true", help="Launch Web Interface")
@@ -487,6 +499,7 @@ Low VRAM Tips (4-6GB):
             engine,
             args.recursive,
             disable_ocr_models,
+            args.existing_files,
         )
 
     else:

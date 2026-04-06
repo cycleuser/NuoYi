@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 _converter_cache: dict = {}
 
@@ -219,6 +219,7 @@ def convert_directory(
     recursive: bool = False,
     disable_ocr_models: bool = False,
     low_vram: bool = False,
+    existing_files: str = "ask",
     on_progress: callable | None = None,
 ) -> ToolResult:
     """Batch-convert all PDF/DOCX files in a directory with optimized memory management.
@@ -243,6 +244,8 @@ def convert_directory(
         Disable OCR models for marker (saves ~1.5GB VRAM, for digital PDFs only).
     low_vram : bool
         Enable low VRAM mode with GPU offloading.
+    existing_files : str
+        How to handle existing output files: 'ask', 'overwrite', 'skip', or 'update'.
     on_progress : callable or None
         Progress callback: on_progress(current, total, filename, success)
 
@@ -273,16 +276,131 @@ def convert_directory(
 
     create_output_directories(files, input_dir, output_dir, recursive)
 
+    existing_output_files = []
+    for f in files:
+        out_path = get_output_path(f, input_dir, output_dir, recursive)
+        if out_path.exists():
+            existing_output_files.append((f, out_path))
+
+    if existing_output_files and existing_files == "ask":
+        print(f"\n[Batch] Found {len(existing_output_files)} existing output files.")
+        print("Choose how to handle them:")
+        print("  [1] Overwrite all - Replace all existing files")
+        print("  [2] Skip all - Keep all existing files")
+        print("  [3] Update all - Only convert if source is newer")
+        print("  [4] Ask for each file individually")
+        print()
+
+        try:
+            choice = input("Enter your choice (1/2/3/4) [default: 4]: ").strip()
+            if choice in ("1", "overwrite"):
+                existing_files = "overwrite"
+                print("[Batch] Will overwrite all existing files.")
+            elif choice in ("2", "skip"):
+                existing_files = "skip"
+                print("[Batch] Will skip all existing files.")
+            elif choice in ("3", "update"):
+                existing_files = "update"
+                print("[Batch] Will only convert files newer than existing.")
+            else:
+                existing_files = "ask_each"
+                print("[Batch] Will ask for each file.")
+        except (EOFError, KeyboardInterrupt):
+            print("\n[Batch] Cancelled. Defaulting to 'skip' mode.")
+            existing_files = "skip"
+
     print(f"[Batch] Converting {len(files)} files...")
 
     results = []
     success_count = 0
     failed_count = 0
+    skipped_count = 0
 
     for i, f in enumerate(files, 1):
         out_path = get_output_path(f, input_dir, output_dir, recursive)
 
         filename = str(f.relative_to(input_dir)) if recursive else f.name
+
+        should_convert = True
+        if out_path.exists():
+            if existing_files == "skip":
+                should_convert = False
+                print(f"[Batch] {i}/{len(files)}: {filename} - Skipping (already exists)")
+            elif existing_files == "update":
+                src_mtime = f.stat().st_mtime
+                out_mtime = out_path.stat().st_mtime
+                if src_mtime <= out_mtime:
+                    should_convert = False
+                    print(f"[Batch] {i}/{len(files)}: {filename} - Skipping (source not newer)")
+                else:
+                    print(f"[Batch] {i}/{len(files)}: {filename} - Updating (source is newer)")
+            elif existing_files == "ask_each":
+                print(f"\n[Batch] {i}/{len(files)}: {filename}")
+                print(f"  Output file already exists: {out_path}")
+                print("  [o] Overwrite this file")
+                print("  [s] Skip this file")
+                print("  [u] Update if source is newer")
+                print("  [O] Overwrite all remaining")
+                print("  [S] Skip all remaining")
+                print("  [U] Update all remaining")
+                try:
+                    choice = input("  Your choice (o/s/u/O/S/U) [default: s]: ").strip().lower()
+                    if choice == "o":
+                        should_convert = True
+                        print("  Will overwrite.")
+                    elif choice == "s":
+                        should_convert = False
+                        print("  Will skip.")
+                    elif choice == "u":
+                        src_mtime = f.stat().st_mtime
+                        out_mtime = out_path.stat().st_mtime
+                        if src_mtime > out_mtime:
+                            should_convert = True
+                            print("  Will update (source is newer).")
+                        else:
+                            should_convert = False
+                            print("  Will skip (source not newer).")
+                    elif choice == "O":
+                        existing_files = "overwrite"
+                        should_convert = True
+                        print("  Will overwrite all remaining files.")
+                    elif choice == "S":
+                        existing_files = "skip"
+                        should_convert = False
+                        print("  Will skip all remaining files.")
+                    elif choice == "U":
+                        existing_files = "update"
+                        src_mtime = f.stat().st_mtime
+                        out_mtime = out_path.stat().st_mtime
+                        if src_mtime > out_mtime:
+                            should_convert = True
+                            print("  Will update all remaining files (this file: newer).")
+                        else:
+                            should_convert = False
+                            print("  Will update all remaining files (this file: not newer).")
+                    else:
+                        should_convert = False
+                        print("  Will skip (default).")
+                except (EOFError, KeyboardInterrupt):
+                    print("\n  Cancelled. Skipping this file.")
+                    should_convert = False
+            elif existing_files == "overwrite":
+                print(f"[Batch] {i}/{len(files)}: {filename} - Overwriting existing file")
+                should_convert = True
+
+        if not should_convert:
+            skipped_count += 1
+            results.append(
+                {
+                    "file": filename,
+                    "success": True,
+                    "output": str(out_path),
+                    "error": None,
+                    "skipped": True,
+                }
+            )
+            continue
+
         print(f"[Batch] {i}/{len(files)}: {filename}")
 
         try:
@@ -301,16 +419,71 @@ def convert_directory(
                 success_count += 1
                 print(f"[Batch] ✓ {filename}")
             else:
-                failed_count += 1
-                print(f"[Batch] ✗ {filename}: {r.error}")
+                error_msg = r.error or "Unknown error"
+                if "CUDA OOM" in error_msg or "CUDA out of memory" in error_msg:
+                    print(f"[Batch] ✗ {filename}: CUDA OOM")
+                    print(f"[Batch] Attempting fallback to CPU...")
+                    try:
+                        r_cpu = convert_file(
+                            f,
+                            output_path=out_path,
+                            force_ocr=force_ocr,
+                            page_range=page_range,
+                            langs=langs,
+                            device="cpu",
+                            disable_ocr_models=disable_ocr_models,
+                            use_cache=False,
+                        )
+                        if r_cpu.success:
+                            success_count += 1
+                            print(f"[Batch] ✓ {filename} (CPU fallback)")
+                            r = r_cpu
+                        else:
+                            failed_count += 1
+                            print(f"[Batch] ✗ {filename}: CPU fallback failed - {r_cpu.error}")
+                    except Exception as e_cpu:
+                        failed_count += 1
+                        print(f"[Batch] ✗ {filename}: CPU fallback failed - {e_cpu}")
+                        r = ToolResult(
+                            success=False, error=f"CUDA OOM, CPU fallback failed: {e_cpu}"
+                        )
+                else:
+                    failed_count += 1
+                    print(f"[Batch] ✗ {filename}: {error_msg}")
 
             if on_progress:
                 on_progress(i, len(files), filename, r.success)
 
         except Exception as e:
-            failed_count += 1
-            r = ToolResult(success=False, error=str(e))
-            print(f"[Batch] ✗ {filename}: {e}")
+            error_msg = str(e)
+            if "CUDA OOM" in error_msg or "CUDA out of memory" in error_msg:
+                print(f"[Batch] ✗ {filename}: CUDA OOM")
+                print(f"[Batch] Attempting fallback to CPU...")
+                try:
+                    r = convert_file(
+                        f,
+                        output_path=out_path,
+                        force_ocr=force_ocr,
+                        page_range=page_range,
+                        langs=langs,
+                        device="cpu",
+                        disable_ocr_models=disable_ocr_models,
+                        use_cache=False,
+                    )
+                    if r.success:
+                        success_count += 1
+                        print(f"[Batch] ✓ {filename} (CPU fallback)")
+                    else:
+                        failed_count += 1
+                        print(f"[Batch] ✗ {filename}: CPU fallback failed - {r.error}")
+                except Exception as e_cpu:
+                    failed_count += 1
+                    r = ToolResult(success=False, error=f"CUDA OOM, CPU fallback failed: {e_cpu}")
+                    print(f"[Batch] ✗ {filename}: CPU fallback failed - {e_cpu}")
+            else:
+                failed_count += 1
+                r = ToolResult(success=False, error=error_msg)
+                print(f"[Batch] ✗ {filename}: {error_msg}")
 
             if on_progress:
                 on_progress(i, len(files), filename, False)
@@ -321,6 +494,7 @@ def convert_directory(
                 "success": r.success,
                 "output": str(out_path) if r.success else None,
                 "error": r.error,
+                "skipped": False,
             }
         )
 
@@ -330,6 +504,16 @@ def convert_directory(
 
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+            except Exception:
+                pass
+
+        if i % 10 == 0:
+            try:
+                import gc
+
+                gc.collect()
+                clear_converter_cache()
             except Exception:
                 pass
 
@@ -337,13 +521,16 @@ def convert_directory(
 
     from . import __version__
 
-    print(f"[Batch] Done: {success_count}/{len(files)} successful")
+    print(
+        f"[Batch] Done: {success_count} converted, {skipped_count} skipped, {failed_count} failed"
+    )
 
     return ToolResult(
         success=failed_count == 0,
         data={
             "files": results,
             "success": success_count,
+            "skipped": skipped_count,
             "failed": failed_count,
         },
         metadata={
