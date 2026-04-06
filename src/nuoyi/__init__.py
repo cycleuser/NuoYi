@@ -63,12 +63,13 @@ Usage:
     text, images = converter.convert_file("input.pdf")
 """
 
-__version__ = "0.4.5"
+__version__ = "0.4.6"
 __author__ = "CycleUser"
 __license__ = "GPL-3.0"
 
 from .api import (
     ToolResult,
+    clear_converter_cache,
     convert_directory as api_convert_directory,
     convert_file as api_convert_file,
 )
@@ -126,6 +127,7 @@ __all__ = [
     "ToolResult",
     "api_convert_file",
     "api_convert_directory",
+    "clear_converter_cache",
     "SUPPORTED_DEVICES",
     "SUPPORTED_LANGUAGES",
     "DEFAULT_LANGS",

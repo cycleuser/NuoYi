@@ -109,139 +109,32 @@ def convert_directory(
     recursive: bool = False,
     disable_ocr_models: bool = False,
 ):
-    """Batch convert all PDF/DOCX files in a directory."""
-    import gc
+    """Batch convert all PDF/DOCX files in a directory with optimized memory."""
 
-    from .utils import (
-        aggressive_memory_cleanup,
-        create_output_directories,
-        find_documents,
-        get_current_memory_usage,
-        get_output_path,
+    from .api import clear_converter_cache
+    from .api import convert_directory as api_convert_directory
+
+    result = api_convert_directory(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        force_ocr=force_ocr,
+        page_range=page_range,
+        langs=langs,
+        device=device,
+        recursive=recursive,
+        disable_ocr_models=disable_ocr_models,
     )
 
-    files = find_documents(input_dir, recursive=recursive)
-    if not files:
-        print("No PDF/DOCX files found in directory.")
-        return
+    if not result.success:
+        print("\nConversion completed with errors:")
+        for file_result in result.data.get("files", []):
+            if not file_result["success"]:
+                print(f"  ✗ {file_result['file']}: {file_result['error']}")
 
-    print(f"Found {len(files)} files to process.\n")
+    if result.metadata.get("recursive"):
+        print("Output directory structure preserved.")
 
-    create_output_directories(files, input_dir, output_dir, recursive)
-
-    pdf_converter = None
-    docx_converter = None
-
-    pdf_files = [f for f in files if f.suffix.lower() == ".pdf"]
-    docx_files = [f for f in files if f.suffix.lower() == ".docx"]
-
-    if pdf_files:
-        print(f"[Batch] Initializing converter for {len(pdf_files)} PDF files...")
-        pdf_converter = get_converter(
-            engine=engine,
-            force_ocr=force_ocr,
-            page_range=page_range,
-            langs=langs,
-            device=device,
-            low_vram=low_vram,
-            disable_ocr_models=disable_ocr_models,
-        )
-
-        mem_info = get_current_memory_usage()
-        if mem_info.get("available"):
-            print(f"[Memory] Converter ready: {mem_info['allocated_gb']:.1f}GB used")
-
-        print()
-
-    if docx_files:
-        docx_converter = DocxConverter()
-
-    success = 0
-    failed = 0
-    oom_errors = 0
-
-    cleanup_interval = 10 if low_vram else 20
-
-    for i, file_path in enumerate(files, 1):
-        suffix = file_path.suffix.lower()
-
-        if recursive:
-            try:
-                display_name = str(file_path.relative_to(input_dir))
-            except ValueError:
-                display_name = file_path.name
-        else:
-            display_name = file_path.name
-
-        print(f"[{i}/{len(files)}] {display_name}...", end=" ", flush=True)
-
-        try:
-            images = {}
-            if suffix == ".pdf" and pdf_converter:
-                content, images = pdf_converter.convert_file(str(file_path))
-            elif suffix == ".docx" and docx_converter:
-                content = docx_converter.convert_file(str(file_path))
-            else:
-                print("SKIPPED (no converter)")
-                continue
-
-            out_path = get_output_path(file_path, input_dir, output_dir, recursive)
-
-            if images:
-                images_subdir = f"{file_path.stem}_images"
-                content = save_images_and_update_markdown(
-                    content, images, out_path.parent, images_subdir
-                )
-
-            out_path.write_text(content, encoding="utf-8")
-            print("OK")
-            success += 1
-
-            del content
-            del images
-            gc.collect()
-
-            if i % cleanup_interval == 0:
-                print(f"\n[Memory] Periodic cleanup ({i}/{len(files)} files processed)")
-                aggressive_memory_cleanup()
-
-                mem_info = get_current_memory_usage()
-                if mem_info.get("available"):
-                    print(
-                        f"[Memory] Current usage: {mem_info['allocated_gb']:.1f}GB / {mem_info['total_gb']:.1f}GB"
-                    )
-                print()
-
-        except RuntimeError as e:
-            error_msg = str(e)
-
-            if "out of memory" in error_msg.lower() or "CUDA out of memory" in error_msg.lower():
-                oom_errors += 1
-                print(f"OOM Error: {error_msg[:100]}...")
-
-                aggressive_memory_cleanup()
-
-                print("[Memory] Cleared cache. Try using --low-vram or --device cpu")
-                failed += 1
-            else:
-                print(f"ERROR: {error_msg[:100]}")
-                failed += 1
-
-        except Exception as e:
-            print(f"ERROR: {str(e)[:100]}")
-            failed += 1
-
-    if pdf_converter and hasattr(pdf_converter, "cleanup"):
-        print("\n[Memory] Final cleanup...")
-        pdf_converter.cleanup()
-        aggressive_memory_cleanup()
-
-    print(f"\nBatch complete: {success} succeeded, {failed} failed")
-    if oom_errors > 0:
-        print(f"  OOM errors: {oom_errors}")
-        print("  Suggestion: Use --low-vram flag or --device cpu")
-    if recursive:
-        print("Output directory structure preserved with '_md' suffix on subdirectories.")
+    clear_converter_cache()
 
 
 DEVICE_DESCRIPTIONS = {
