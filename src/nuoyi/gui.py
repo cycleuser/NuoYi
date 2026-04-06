@@ -120,8 +120,15 @@ class ConverterWorker(QThread):
         self.log_signal.emit(f"Starting processing of {len(self.files)} files...")
         self.log_signal.emit(f"Engine: {self.engine}, Device: {self.device}")
 
+        from .utils import get_output_path
+
         pdf_converter = None
         docx_converter = None
+
+        # 统计
+        success_count = 0
+        failed_count = 0
+        skipped_count = 0
 
         try:
             if any(fp.lower().endswith(".pdf") for _, fp in self.files):
@@ -150,6 +157,37 @@ class ConverterWorker(QThread):
 
             filename = os.path.basename(filepath)
             suffix = Path(filepath).suffix.lower()
+
+            # 计算输出路径
+            out_path = get_output_path(
+                Path(filepath), self.input_dir, self.output_dir, self.recursive
+            )
+
+            # 检查文件是否存在，根据策略决定是否跳过
+            should_convert = True
+            if out_path.exists():
+                if self.existing_files == "skip":
+                    should_convert = False
+                    self.status_signal.emit(index, "Skipped")
+                    self.log_signal.emit(f"[{filename}] Skipped (already exists)")
+                    skipped_count += 1
+                    continue
+                elif self.existing_files == "update":
+                    src_mtime = Path(filepath).stat().st_mtime
+                    out_mtime = out_path.stat().st_mtime
+                    if src_mtime <= out_mtime:
+                        should_convert = False
+                        self.status_signal.emit(index, "Skipped")
+                        self.log_signal.emit(f"[{filename}] Skipped (source not newer)")
+                        skipped_count += 1
+                        continue
+                    else:
+                        self.log_signal.emit(f"[{filename}] Updating (source is newer)")
+                elif self.existing_files == "overwrite":
+                    self.log_signal.emit(f"[{filename}] Overwriting existing file")
+
+            if not should_convert:
+                continue
             self.status_signal.emit(index, "Converting...")
             self.progress_signal.emit(index, 10)
             self.log_signal.emit(f"Processing: {filename}")
@@ -182,12 +220,17 @@ class ConverterWorker(QThread):
 
                 self.status_signal.emit(index, "Completed")
                 self.progress_signal.emit(index, 100)
-                self.log_signal.emit(f"[{filename}] Done -> {os.path.basename(out_path)}")
+                self.log_signal.emit(f"[{filename}] Done -> {out_path.name}")
+                success_count += 1
 
             except Exception as e:
                 self.status_signal.emit(index, "Error")
                 self.log_signal.emit(f"[{filename}] Error: {e}")
+                failed_count += 1
 
+        self.log_signal.emit(
+            f"Done: {success_count} converted, {skipped_count} skipped, {failed_count} failed"
+        )
         self.finished_signal.emit()
 
     def stop(self):

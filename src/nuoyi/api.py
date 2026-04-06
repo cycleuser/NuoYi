@@ -325,13 +325,35 @@ def convert_directory(
         if out_path.exists():
             if existing_files == "skip":
                 should_convert = False
+                skipped_count += 1
                 print(f"[Batch] {i}/{len(files)}: {filename} - Skipping (already exists)")
+                results.append(
+                    {
+                        "file": filename,
+                        "success": True,
+                        "output": str(out_path),
+                        "error": None,
+                        "skipped": True,
+                    }
+                )
+                continue
             elif existing_files == "update":
                 src_mtime = f.stat().st_mtime
                 out_mtime = out_path.stat().st_mtime
                 if src_mtime <= out_mtime:
                     should_convert = False
+                    skipped_count += 1
                     print(f"[Batch] {i}/{len(files)}: {filename} - Skipping (source not newer)")
+                    results.append(
+                        {
+                            "file": filename,
+                            "success": True,
+                            "output": str(out_path),
+                            "error": None,
+                            "skipped": True,
+                        }
+                    )
+                    continue
                 else:
                     print(f"[Batch] {i}/{len(files)}: {filename} - Updating (source is newer)")
             elif existing_files == "ask_each":
@@ -350,7 +372,18 @@ def convert_directory(
                         print("  Will overwrite.")
                     elif choice == "s":
                         should_convert = False
-                        print("  Will skip.")
+                        skipped_count += 1
+                        print("  Skipping.")
+                        results.append(
+                            {
+                                "file": filename,
+                                "success": True,
+                                "output": str(out_path),
+                                "error": None,
+                                "skipped": True,
+                            }
+                        )
+                        continue
                     elif choice == "u":
                         src_mtime = f.stat().st_mtime
                         out_mtime = out_path.stat().st_mtime
@@ -359,7 +392,18 @@ def convert_directory(
                             print("  Will update (source is newer).")
                         else:
                             should_convert = False
-                            print("  Will skip (source not newer).")
+                            skipped_count += 1
+                            print("  Skipping (source not newer).")
+                            results.append(
+                                {
+                                    "file": filename,
+                                    "success": True,
+                                    "output": str(out_path),
+                                    "error": None,
+                                    "skipped": True,
+                                }
+                            )
+                            continue
                     elif choice == "O":
                         existing_files = "overwrite"
                         should_convert = True
@@ -367,39 +411,69 @@ def convert_directory(
                     elif choice == "S":
                         existing_files = "skip"
                         should_convert = False
+                        skipped_count += 1
                         print("  Will skip all remaining files.")
+                        results.append(
+                            {
+                                "file": filename,
+                                "success": True,
+                                "output": str(out_path),
+                                "error": None,
+                                "skipped": True,
+                            }
+                        )
+                        continue
                     elif choice == "U":
                         existing_files = "update"
                         src_mtime = f.stat().st_mtime
                         out_mtime = out_path.stat().st_mtime
                         if src_mtime > out_mtime:
                             should_convert = True
-                            print("  Will update all remaining files (this file: newer).")
+                            print("  Will update all remaining (this file: newer).")
                         else:
                             should_convert = False
-                            print("  Will update all remaining files (this file: not newer).")
+                            skipped_count += 1
+                            print("  Will update all remaining (this file: not newer).")
+                            results.append(
+                                {
+                                    "file": filename,
+                                    "success": True,
+                                    "output": str(out_path),
+                                    "error": None,
+                                    "skipped": True,
+                                }
+                            )
+                            continue
                     else:
                         should_convert = False
-                        print("  Will skip (default).")
+                        skipped_count += 1
+                        print("  Skipping (default).")
+                        results.append(
+                            {
+                                "file": filename,
+                                "success": True,
+                                "output": str(out_path),
+                                "error": None,
+                                "skipped": True,
+                            }
+                        )
+                        continue
                 except (EOFError, KeyboardInterrupt):
                     print("\n  Cancelled. Skipping this file.")
                     should_convert = False
+                    skipped_count += 1
+                    results.append(
+                        {
+                            "file": filename,
+                            "success": True,
+                            "output": str(out_path),
+                            "error": None,
+                            "skipped": True,
+                        }
+                    )
+                    continue
             elif existing_files == "overwrite":
                 print(f"[Batch] {i}/{len(files)}: {filename} - Overwriting existing file")
-                should_convert = True
-
-        if not should_convert:
-            skipped_count += 1
-            results.append(
-                {
-                    "file": filename,
-                    "success": True,
-                    "output": str(out_path),
-                    "error": None,
-                    "skipped": True,
-                }
-            )
-            continue
 
         print(f"[Batch] {i}/{len(files)}: {filename}")
 
