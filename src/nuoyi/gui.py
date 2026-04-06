@@ -92,6 +92,7 @@ class ConverterWorker(QThread):
         engine: str = "auto",
         recursive: bool = False,
         disable_ocr_models: bool = False,
+        existing_files: str = "ask",
         parent=None,
     ):
         super().__init__(parent)
@@ -106,6 +107,7 @@ class ConverterWorker(QThread):
         self.engine = engine
         self.recursive = recursive
         self.disable_ocr_models = disable_ocr_models
+        self.existing_files = existing_files
         self.is_running = True
 
     def run(self):
@@ -366,6 +368,24 @@ class MainWindow(QMainWindow):
             cb.setToolTip(name)
             self.lang_checkboxes[code] = cb
             row3.addWidget(cb)
+
+        row3.addSpacing(20)
+        row3.addWidget(QLabel("Existing Files:"))
+        self.existing_files_combo = QComboBox()
+        self.existing_files_combo.addItem("Ask (interactive)", "ask")
+        self.existing_files_combo.addItem("Overwrite all", "overwrite")
+        self.existing_files_combo.addItem("Skip all", "skip")
+        self.existing_files_combo.addItem("Update if newer", "update")
+        self.existing_files_combo.setCurrentIndex(0)
+        self.existing_files_combo.setToolTip(
+            "How to handle existing output files:\n"
+            "• Ask: Interactive prompt\n"
+            "• Overwrite: Replace all existing files\n"
+            "• Skip: Keep all existing files\n"
+            "• Update: Only convert if source is newer"
+        )
+        row3.addWidget(self.existing_files_combo)
+
         row3.addStretch()
         layout.addLayout(row3)
 
@@ -465,6 +485,7 @@ class MainWindow(QMainWindow):
         recursive = self.recursive_cb.isChecked()
         low_vram = self.low_vram_cb.isChecked()
         disable_ocr_models = self.disable_ocr_models_cb.isChecked()
+        existing_files = self.existing_files_combo.currentData() or "ask"
         page_range = self.page_range_input.text().strip() or None
         selected = [code for code, cb in self.lang_checkboxes.items() if cb.isChecked()]
         langs = ",".join(selected) if selected else DEFAULT_LANGS
@@ -490,6 +511,7 @@ class MainWindow(QMainWindow):
             engine=engine,
             recursive=recursive,
             disable_ocr_models=disable_ocr_models,
+            existing_files=existing_files,
         )
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.status_signal.connect(self.update_status)

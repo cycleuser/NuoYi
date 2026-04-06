@@ -63,7 +63,7 @@ Usage:
     text, images = converter.convert_file("input.pdf")
 """
 
-__version__ = "0.4.6"
+__version__ = "0.4.7"
 __author__ = "CycleUser"
 __license__ = "GPL-3.0"
 
