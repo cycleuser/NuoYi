@@ -44,16 +44,11 @@ from docx import Document
 from .utils import (
     DEFAULT_LANGS,
     LOW_VRAM_THRESHOLD_GB,
-    VERY_LOW_VRAM_THRESHOLD_GB,
-    aggressive_memory_cleanup,
     clean_markdown,
     clear_gpu_memory,
     enable_low_vram_mode,
-    enable_very_low_vram_mode,
     get_gpu_memory_info,
     get_rocm_memory_info,
-    is_amd_gpu_available,
-    is_directml_available,
     is_rocm_available,
     select_device,
     setup_memory_optimization,
@@ -63,6 +58,13 @@ if TYPE_CHECKING:
     pass
 
 setup_memory_optimization()
+
+import fitz  # noqa: E402
+
+from marker.converters.pdf import PdfConverter  # noqa: E402
+from marker.models import create_model_dict  # noqa: E402
+from marker.output import text_from_rendered  # noqa: E402
+from marker.config.parser import ConfigParser  # noqa: E402
 
 SUPPORTED_ENGINES = [
     "auto",
@@ -419,20 +421,15 @@ class MinerUConverter:
 
 
 class MarkerPDFConverter:
-    """marker-pdf - best quality output with AMD GPU support.
+    """Primary PDF to Markdown converter using marker-pdf.
 
-    Type: Local, Free, Offline
-    GPU: Recommended (4GB+ VRAM), supports AMD via DirectML/ROCm
-    OCR: Yes
-    Models: ~3GB (full), ~1.5GB (minimal without OCR)
-    Install: pip install marker-pdf
+    Models are loaded once and reused across multiple files.
+    Automatically handles GPU memory issues with CPU fallback.
 
-    Memory Management:
-    - Lazy model loading (only loads when first file is processed)
-    - Automatic memory cleanup after each file
-    - OOM recovery with retry mechanism
-    - Low VRAM optimization (<6GB)
-    - Minimal model mode for digital PDFs (no OCR/table models)
+    Memory optimization for low VRAM (4-6GB):
+    - Automatic low_vram mode when VRAM < 6GB
+    - OCR models offloaded to CPU (saves ~2GB)
+    - Reduced batch sizes
     """
 
     def __init__(
@@ -442,372 +439,176 @@ class MarkerPDFConverter:
         langs: str = DEFAULT_LANGS,
         device: str = "auto",
         low_vram: bool = False,
-        batch_size: int | None = None,
-        disable_ocr_models: bool = False,
     ):
         self.force_ocr = force_ocr
         self.page_range = page_range
         self.langs = langs
         self.low_vram = low_vram
-        self.batch_size = batch_size
-        self.disable_ocr_models = disable_ocr_models
-        self.converter = None
-        self.artifact_dict = None
-        self.device = self._select_device_with_memory_check(device)
-        self._models_loaded = False
-        self._file_count = 0
 
-        if self.disable_ocr_models:
-            print("[Memory] OCR models disabled - suitable for digital PDFs only")
+        selected_device = select_device(device)
 
-        if self.low_vram:
-            self._setup_low_vram_mode()
-
-    def _select_device_with_memory_check(self, device: str) -> str:
-        """Select device based on available memory."""
-        selected = select_device(device)
-
-        if selected == "cuda":
+        if selected_device == "cuda":
             try:
-                total, free = get_gpu_memory_info()
+                total, _ = get_gpu_memory_info()
                 if total <= 0 and is_rocm_available():
-                    total, free = get_rocm_memory_info()
+                    total, _ = get_rocm_memory_info()
 
-                print(f"[Memory] GPU detected: {total:.1f}GB total, {free:.1f}GB free")
-
-                if total <= LOW_VRAM_THRESHOLD_GB:
-                    print(f"[Memory] Low VRAM mode auto-enabled (<{LOW_VRAM_THRESHOLD_GB}GB)")
+                if total < LOW_VRAM_THRESHOLD_GB:
+                    print(f"[Memory] Low VRAM detected ({total:.1f}GB) - enabling optimization")
                     self.low_vram = True
-                elif total <= VERY_LOW_VRAM_THRESHOLD_GB:
-                    print(
-                        f"[Memory] Very low VRAM mode auto-enabled (<{VERY_LOW_VRAM_THRESHOLD_GB}GB)"
-                    )
-                    self.low_vram = True
-                    enable_very_low_vram_mode()
-
             except Exception:
                 pass
 
-        return selected
-
-    def _setup_low_vram_mode(self):
-        """Setup optimizations for low VRAM."""
-        print("[Memory] Enabling low VRAM optimizations...")
-
-        enable_low_vram_mode()
-
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.set_per_process_memory_fraction(0.7, 0)
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-
-        if self.batch_size is None:
-            self.batch_size = 1
-
-    def _create_offloaded_model_dict(self, device=None, dtype=None):
-        """Create model dict with layout on GPU, OCR models on CPU.
-
-        This saves ~2GB GPU memory by keeping OCR models on CPU.
-        Models are moved to GPU temporarily during inference as needed.
-        """
-        try:
-            from surya.layout import LayoutPredictor
-            from surya.recognition import RecognitionPredictor
-            from surya.table_rec import TableRecPredictor
-            from surya.detection import DetectionPredictor
-            from surya.ocr_error import OCRErrorPredictor
-            from surya.foundation import FoundationPredictor
-            from surya.settings import settings as surya_settings
-
-            print("[Memory] Creating offloaded models (layout GPU, OCR CPU)")
-
-            gpu_device = device or "cuda"
-            cpu_device = "cpu"
-
-            import torch
-
-            model_dtype = dtype or (torch.float16 if self.low_vram else torch.float32)
-
-            layout_checkpoint = getattr(surya_settings, "LAYOUT_MODEL_CHECKPOINT", None)
-            recognition_checkpoint = getattr(surya_settings, "RECOGNITION_MODEL_CHECKPOINT", None)
-
-            layout_foundation = FoundationPredictor(
-                checkpoint=layout_checkpoint, device=gpu_device, dtype=model_dtype
-            )
-
-            recognition_foundation_cpu = FoundationPredictor(
-                checkpoint=recognition_checkpoint, device=cpu_device, dtype=torch.float32
-            )
-
-            print(f"[Memory] Layout model: {gpu_device} ({model_dtype})")
-            print(f"[Memory] OCR models: {cpu_device} (offloaded)")
-
-            # Determine batch sizes
-            if self.batch_size == 1:
-                layout_bs = 1
-                recognition_bs = 1
-                print(f"[Memory] Batch sizes: layout=1, ocr=1 (minimal VRAM mode)")
-            elif self.low_vram:
-                layout_bs = 4
-                recognition_bs = 12
-                print(f"[Memory] Batch sizes: layout=4, ocr=12 (optimized for low VRAM)")
-            else:
-                layout_bs = None  # Use default
-                recognition_bs = None  # Use default
-
-            return {
-                "layout_model": LayoutPredictor(layout_foundation),
-                "recognition_model": RecognitionPredictor(recognition_foundation_cpu),
-                "table_rec_model": TableRecPredictor(device=cpu_device, dtype=torch.float32),
-                "detection_model": DetectionPredictor(device=cpu_device, dtype=torch.float32),
-                "ocr_error_model": OCRErrorPredictor(device=cpu_device, dtype=torch.float32),
-                "layout_batch_size": layout_bs,
-                "recognition_batch_size": recognition_bs,
-            }
-        except Exception as e:
-            print(f"[Memory] Offloading failed: {e}")
-            print("[Memory] Falling back to all models on GPU")
-            from marker.models import create_model_dict
-
-            return create_model_dict(device=device, dtype=dtype)
-
-    def _create_fp16_model_dict(self, device=None):
-        """Create model dict with FP16 and offloading."""
-        import torch
-
-        dtype = torch.float16 if self.low_vram else None
-        return self._create_offloaded_model_dict(device=device, dtype=dtype)
-
-    def _create_minimal_model_dict(self, device=None, dtype=None):
-        """Fallback to offloaded models."""
-        return self._create_offloaded_model_dict(device=device, dtype=dtype)
-
-    def _load_models(self):
-        """Lazy load models on first use with memory optimization."""
-        if self._models_loaded:
-            return
-
-        from marker.converters.pdf import PdfConverter
-
-        print("[Memory] Loading marker-pdf models...")
+        self.device = selected_device
+        os.environ["TORCH_DEVICE"] = self.device
 
         if self.low_vram:
-            print("[Memory] Low VRAM mode: layout GPU + OCR CPU offloading")
-        elif self.disable_ocr_models:
-            print("[Memory] Minimal mode: layout GPU + OCR CPU (offloaded)")
-        else:
-            print("[Memory] Standard mode: all models on GPU")
+            self._setup_low_vram_optimizations()
+
+        config = {"output_format": "markdown"}
+        if force_ocr:
+            config["force_ocr"] = True
+        if page_range:
+            config["page_range"] = page_range
+        if langs:
+            config["languages"] = langs
+
+        config_parser = ConfigParser(config)
+
+        self._load_models_with_fallback(config_parser)
+
+    def _setup_low_vram_optimizations(self):
+        """Setup memory optimizations for low VRAM."""
+        print("[Memory] Low VRAM optimizations enabled")
+        enable_low_vram_mode()
+
+    def _load_models_with_fallback(self, config_parser):
+        """Load marker-pdf models with automatic CPU fallback on CUDA OOM."""
+        print(f"Loading marker-pdf models on {self.device.upper()}...")
+        print("(First run downloads ~2-3 GB of model weights)")
+
+        clear_gpu_memory()
 
         try:
-            import torch
+            if self.low_vram:
+                import torch
 
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                self.artifact_dict = create_model_dict(device=self.device, dtype=torch.float16)
+            else:
+                self.artifact_dict = create_model_dict()
 
-                if self.low_vram:
-                    torch.cuda.set_per_process_memory_fraction(0.7, 0)
+            self.converter = PdfConverter(
+                config=config_parser.generate_config_dict(),
+                artifact_dict=self.artifact_dict,
+                processor_list=config_parser.get_processors(),
+                renderer=config_parser.get_renderer(),
+            )
+            print(f"Models loaded successfully on {self.device.upper()}.")
 
-                    import os
+        except RuntimeError as e:
+            error_msg = str(e).lower()
+            if "cuda" in error_msg and ("out of memory" in error_msg or "oom" in error_msg):
+                if self.device != "cpu":
+                    print("\n[WARNING] CUDA out of memory! Falling back to CPU...")
+                    print("[WARNING] This will be slower but avoids memory issues.\n")
 
-                    os.environ.setdefault(
-                        "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:64"
+                    clear_gpu_memory()
+
+                    self.converter = None
+                    self.artifact_dict = None
+
+                    import gc
+
+                    gc.collect()
+
+                    self.device = "cpu"
+                    os.environ["TORCH_DEVICE"] = "cpu"
+
+                    clear_gpu_memory()
+
+                    print("Reloading models on CPU...")
+                    self.artifact_dict = create_model_dict(device="cpu")
+                    self.converter = PdfConverter(
+                        config=config_parser.generate_config_dict(),
+                        artifact_dict=self.artifact_dict,
+                        processor_list=config_parser.get_processors(),
+                        renderer=config_parser.get_renderer(),
                     )
-                    print("[Memory] Low VRAM mode: aggressive memory limits")
-        except Exception:
-            pass
-
-        try:
-            total, free = get_gpu_memory_info()
-            if total > 0:
-                print(f"[Memory] GPU: {total:.1f}GB total, {free:.1f}GB free")
-
-                required_memory = 1.5 if self.disable_ocr_models else 3.0
-
-                if free < required_memory:
-                    print(
-                        f"[Memory] WARNING: Low memory ({free:.1f}GB < {required_memory:.1f}GB needed)"
-                    )
-
-                    if self.low_vram:
-                        print("[Memory] Using offloading to reduce memory...")
-
-                    aggressive_memory_cleanup()
-                    total, free = get_gpu_memory_info()
-                    print(f"[Memory] After cleanup: {free:.1f}GB free")
-
-                    if free < required_memory * 0.5:
-                        raise RuntimeError(
-                            f"Insufficient GPU memory: {free:.1f}GB free, need {required_memory:.1f}GB\n"
-                            f"Solutions:\n"
-                            f"  1. Use --low-vram for memory optimization\n"
-                            f"  2. Use --disable-ocr-models for digital PDFs (saves ~2GB)\n"
-                            f"  3. Use --device cpu for CPU mode\n"
-                            f"  4. Use --engine pymupdf for fast CPU conversion"
-                        )
-        except Exception as e:
-            if isinstance(e, RuntimeError):
+                    print("Models loaded successfully on CPU.")
+                else:
+                    raise
+            else:
                 raise
-            pass
-
-        device_arg = None if self.device == "auto" else self.device
-
-        if self.low_vram or self.disable_ocr_models:
-            self.artifact_dict = self._create_offloaded_model_dict(device=device_arg)
-        else:
-            from marker.models import create_model_dict
-
-            self.artifact_dict = create_model_dict(device=device_arg)
-
-        self.converter = PdfConverter(artifact_dict=self.artifact_dict)
-        self._models_loaded = True
-
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                allocated = torch.cuda.memory_allocated(0) / 1024**3
-                reserved = torch.cuda.memory_reserved(0) / 1024**3
-                print(f"[Memory] Models loaded: {allocated:.1f}GB used, {reserved:.1f}GB reserved")
-        except Exception:
-            pass
-
-        print("[Memory] Ready for conversion")
 
     def convert_file(self, pdf_path: str) -> tuple[str, dict]:
-        """Convert PDF file with aggressive memory management."""
-        self._load_models()
+        """Convert a single PDF file to Markdown text and extract images.
 
-        try:
-            import torch
-
-            if torch.cuda.is_available() and self.low_vram:
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-
-        from marker.output import text_from_rendered
+        Returns:
+            Tuple of (markdown_text, images_dict) where images_dict maps
+            image filenames to PIL Image objects or base64 data.
+        """
+        clear_gpu_memory()
 
         try:
             rendered = self.converter(pdf_path)
             text, _, images = text_from_rendered(rendered)
-
-            self._file_count += 1
-
-            result_text = clean_markdown(text)
-            result_images = images or {}
-
-            del rendered
-            del text
-            del images
-
-            try:
-                import torch
-                import gc
-
-                gc.collect()
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-
-                    if self.low_vram:
-                        allocated = torch.cuda.memory_allocated(0) / 1024**3
-                        if allocated > 2.0:
-                            torch.cuda.empty_cache()
-                            torch.cuda.synchronize()
-                            gc.collect()
-            except Exception:
-                pass
-
-            return result_text, result_images
+            return clean_markdown(text), images or {}
 
         except RuntimeError as e:
-            error_msg = str(e)
+            error_msg = str(e).lower()
+            if "cuda" in error_msg and ("out of memory" in error_msg or "oom" in error_msg):
+                if self.device != "cpu":
+                    print("\n[WARNING] CUDA OOM during conversion! Retrying on CPU...")
 
-            if "out of memory" in error_msg.lower():
-                print(f"[Memory] OOM: {error_msg[:150]}...")
+                    clear_gpu_memory()
 
-                aggressive_memory_cleanup()
+                    self.converter = None
+                    self.artifact_dict = None
 
-                try:
-                    import torch
+                    import gc
 
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                        free = (
-                            torch.cuda.memory_reserved(0) - torch.cuda.memory_allocated(0)
-                        ) / 1024**3
+                    gc.collect()
 
-                        if free < 1.0:
-                            print("[Memory] Insufficient memory for retry")
-                            raise RuntimeError(
-                                "CUDA OOM. Solutions:\n"
-                                "  1. Use --low-vram\n"
-                                "  2. Use --disable-ocr-models (digital PDFs)\n"
-                                "  3. Use --device cpu\n"
-                                "  4. Use --engine pymupdf"
-                            ) from e
+                    clear_gpu_memory()
 
-                        print(f"[Memory] Retrying with {free:.1f}GB free...")
+                    self.device = "cpu"
+                    os.environ["TORCH_DEVICE"] = "cpu"
 
-                        rendered = self.converter(pdf_path)
-                        text, _, images = text_from_rendered(rendered)
+                    config = {"output_format": "markdown"}
+                    if self.force_ocr:
+                        config["force_ocr"] = True
+                    if self.page_range:
+                        config["page_range"] = self.page_range
+                    if self.langs:
+                        config["languages"] = self.langs
 
-                        result_text = clean_markdown(text)
-                        result_images = images or {}
+                    config_parser = ConfigParser(config)
+                    self.artifact_dict = create_model_dict(device="cpu")
+                    self.converter = PdfConverter(
+                        config=config_parser.generate_config_dict(),
+                        artifact_dict=self.artifact_dict,
+                        processor_list=config_parser.get_processors(),
+                        renderer=config_parser.get_renderer(),
+                    )
 
-                        del rendered
-                        del text
-                        del images
+                    clear_gpu_memory()
 
-                        try:
-                            import torch
-                            import gc
+                    rendered = self.converter(pdf_path)
+                    text, _, images = text_from_rendered(rendered)
+                    return clean_markdown(text), images or {}
+                raise
+            raise
 
-                            gc.collect()
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                                torch.cuda.synchronize()
-                        except Exception:
-                            pass
-
-                        return result_text, result_images
-                except Exception as retry_error:
-                    if "out of memory" in str(retry_error).lower():
-                        raise RuntimeError(
-                            "CUDA OOM persists. Use: --low-vram, --disable-ocr-models, or --engine pymupdf"
-                        ) from retry_error
-                    raise retry_error
-
-            raise e
-
-        except Exception as e:
-            raise e
-
-    def cleanup(self):
-        """Explicit cleanup of converter resources."""
-        if self.converter is not None:
-            try:
-                del self.converter
-                self.converter = None
-            except Exception:
-                pass
-
-        if self.artifact_dict is not None:
-            try:
-                del self.artifact_dict
-                self.artifact_dict = None
-            except Exception:
-                pass
-
-        self._models_loaded = False
-        aggressive_memory_cleanup()
-
-        print("[Memory] Converter resources cleaned up")
+    @staticmethod
+    def get_page_count(pdf_path: str) -> int:
+        """Quick page count using PyMuPDF."""
+        try:
+            doc = fitz.open(pdf_path)
+            count = len(doc)
+            doc.close()
+            return count
+        except Exception:
+            return 0
 
     @staticmethod
     def is_available() -> bool:
@@ -1012,7 +813,6 @@ def get_converter(
     langs: str = DEFAULT_LANGS,
     device: str = "auto",
     low_vram: bool = False,
-    disable_ocr_models: bool = False,
     api_key: str | None = None,
     app_id: str | None = None,
     app_key: str | None = None,
@@ -1033,7 +833,6 @@ def get_converter(
             - mlx: Apple MLX
             - cpu: CPU only
         low_vram: Low VRAM mode (<6GB)
-        disable_ocr_models: Disable OCR models for marker (saves ~1.5GB, for digital PDFs)
         api_key: API key for LlamaParse
         app_id: App ID for Mathpix
         app_key: App key for Mathpix
@@ -1102,18 +901,13 @@ def get_converter(
             if low_vram:
                 vram_info = " [Low VRAM mode]"
 
-            ocr_info = ""
-            if disable_ocr_models:
-                ocr_info = " [No OCR models - digital PDFs only]"
-
-            print(f"[Converter] Using marker-pdf (best quality){amd_info}{vram_info}{ocr_info}")
+            print(f"[Converter] Using marker-pdf (best quality){amd_info}{vram_info}")
             return MarkerPDFConverter(
                 force_ocr=force_ocr,
                 page_range=page_range,
                 langs=langs,
                 device=device,
                 low_vram=low_vram,
-                disable_ocr_models=disable_ocr_models,
             )
 
     raise ImportError(

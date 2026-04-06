@@ -58,7 +58,6 @@ def convert_single_file(
     device: str = "auto",
     low_vram: bool = False,
     engine: str = "auto",
-    disable_ocr_models: bool = False,
 ):
     """Convert a single PDF or DOCX file."""
     suffix = input_path.suffix.lower()
@@ -72,7 +71,6 @@ def convert_single_file(
             langs=langs,
             device=device,
             low_vram=low_vram,
-            disable_ocr_models=disable_ocr_models,
         )
         content, images = converter.convert_file(str(input_path))
 
@@ -107,9 +105,7 @@ def convert_directory(
     low_vram: bool = False,
     engine: str = "auto",
     recursive: bool = False,
-    disable_ocr_models: bool = False,
     existing_files: str = "ask",
-    batch_size_1: bool = False,
 ):
     """Batch convert all PDF/DOCX files in a directory with optimized memory."""
 
@@ -125,9 +121,7 @@ def convert_directory(
         device=device,
         low_vram=low_vram,
         recursive=recursive,
-        disable_ocr_models=disable_ocr_models,
         existing_files=existing_files,
-        batch_size_1=batch_size_1,
     )
 
     if not result.success:
@@ -261,16 +255,6 @@ Low VRAM Tips (4-6GB):
         help="GPU device: cuda (NVIDIA), directml (AMD Windows), rocm (AMD Linux), mps/mlx (Apple), cpu",
     )
     parser.add_argument("--low-vram", action="store_true", help="Low VRAM mode (4-6GB GPUs)")
-    parser.add_argument(
-        "--disable-ocr-models",
-        action="store_true",
-        help="Disable OCR models for marker (saves ~1.5GB VRAM, for digital PDFs only)",
-    )
-    parser.add_argument(
-        "--batch-size-1",
-        action="store_true",
-        help="Use batch_size=1 for minimal VRAM usage (slowest but most stable)",
-    )
     parser.add_argument(
         "--existing-files",
         choices=["ask", "overwrite", "skip", "update"],
@@ -426,12 +410,6 @@ Low VRAM Tips (4-6GB):
     device = args.device
     low_vram = args.low_vram
     engine = args.engine
-    disable_ocr_models = args.disable_ocr_models
-
-    if disable_ocr_models and force_ocr:
-        print("Warning: --disable-ocr-models conflicts with --force-ocr")
-        print("         OCR models disabled, force_ocr will be ignored")
-        force_ocr = False
 
     setup_memory_optimization(low_vram=low_vram)
 
@@ -457,8 +435,6 @@ Low VRAM Tips (4-6GB):
             print(f"Device: {device}")
             if low_vram:
                 print("Low VRAM: True (optimized for 4-6GB)")
-            if disable_ocr_models:
-                print("OCR Models: Disabled (digital PDFs only, saves ~1.5GB)")
         if force_ocr:
             print("Force OCR: True")
         if page_range:
@@ -474,7 +450,6 @@ Low VRAM Tips (4-6GB):
             device,
             low_vram,
             engine,
-            disable_ocr_models,
         )
 
     elif input_path.is_dir():
@@ -490,8 +465,6 @@ Low VRAM Tips (4-6GB):
             print(f"Device: {device}")
             if low_vram:
                 print("Low VRAM: True (optimized for 4-6GB)")
-            if disable_ocr_models:
-                print("OCR Models: Disabled (digital PDFs only, saves ~1.5GB)")
         if args.recursive:
             print("Recursive: True")
         print()
@@ -506,9 +479,7 @@ Low VRAM Tips (4-6GB):
             low_vram,
             engine,
             args.recursive,
-            disable_ocr_models,
             args.existing_files,
-            args.batch_size_1,
         )
 
     else:

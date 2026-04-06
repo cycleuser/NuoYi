@@ -299,17 +299,27 @@ def _estimate_vram_from_gpu_name(name: str) -> float:
 
 def clear_gpu_memory():
     """Release unused GPU memory for all backends."""
+    import gc
+
+    gc.collect()
+
     try:
         import torch
 
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
             torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+
+            if hasattr(torch.cuda, "reset_peak_memory_stats"):
+                torch.cuda.reset_peak_memory_stats()
+
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             torch.mps.empty_cache()
-        gc.collect()
     except Exception:
-        gc.collect()
+        pass
+
+    gc.collect()
 
 
 def aggressive_memory_cleanup():

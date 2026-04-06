@@ -81,17 +81,16 @@ class ConverterWorker(QThread):
 
     def __init__(
         self,
-        files: list[tuple[int, str]],
+        files,
         input_dir: str,
         output_dir: str,
         force_ocr: bool = False,
         page_range: str | None = None,
-        langs: str = DEFAULT_LANGS,
+        langs: str = "zh,en",
         device: str = "auto",
         low_vram: bool = False,
         engine: str = "auto",
         recursive: bool = False,
-        disable_ocr_models: bool = False,
         existing_files: str = "ask",
         parent=None,
     ):
@@ -106,7 +105,6 @@ class ConverterWorker(QThread):
         self.low_vram = low_vram
         self.engine = engine
         self.recursive = recursive
-        self.disable_ocr_models = disable_ocr_models
         self.existing_files = existing_files
         self.is_running = True
 
@@ -141,7 +139,6 @@ class ConverterWorker(QThread):
                     langs=self.langs,
                     device=self.device,
                     low_vram=self.low_vram,
-                    disable_ocr_models=self.disable_ocr_models,
                 )
                 self.log_signal.emit("Converter ready.")
         except Exception as e:
@@ -366,12 +363,6 @@ class MainWindow(QMainWindow):
         self.low_vram_cb.setToolTip("Enable for GPUs <8GB")
         row1.addWidget(self.low_vram_cb)
 
-        self.disable_ocr_models_cb = QCheckBox("No OCR Models")
-        self.disable_ocr_models_cb.setToolTip(
-            "Disable OCR models (~1.5GB VRAM saved, for digital PDFs only)"
-        )
-        row1.addWidget(self.disable_ocr_models_cb)
-
         row1.addWidget(QLabel("Page Range:"))
         self.page_range_input = QLineEdit()
         self.page_range_input.setPlaceholderText("e.g. 0-5,10")
@@ -527,7 +518,6 @@ class MainWindow(QMainWindow):
         force_ocr = self.force_ocr_cb.isChecked()
         recursive = self.recursive_cb.isChecked()
         low_vram = self.low_vram_cb.isChecked()
-        disable_ocr_models = self.disable_ocr_models_cb.isChecked()
         existing_files = self.existing_files_combo.currentData() or "ask"
         page_range = self.page_range_input.text().strip() or None
         selected = [code for code, cb in self.lang_checkboxes.items() if cb.isChecked()]
@@ -553,7 +543,6 @@ class MainWindow(QMainWindow):
             low_vram=low_vram,
             engine=engine,
             recursive=recursive,
-            disable_ocr_models=disable_ocr_models,
             existing_files=existing_files,
         )
         self.worker.progress_signal.connect(self.update_progress)
