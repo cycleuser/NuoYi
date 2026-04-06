@@ -109,6 +109,7 @@ def convert_directory(
     recursive: bool = False,
     disable_ocr_models: bool = False,
     existing_files: str = "ask",
+    batch_size_1: bool = False,
 ):
     """Batch convert all PDF/DOCX files in a directory with optimized memory."""
 
@@ -122,9 +123,11 @@ def convert_directory(
         page_range=page_range,
         langs=langs,
         device=device,
+        low_vram=low_vram,
         recursive=recursive,
         disable_ocr_models=disable_ocr_models,
         existing_files=existing_files,
+        batch_size_1=batch_size_1,
     )
 
     if not result.success:
@@ -262,6 +265,11 @@ Low VRAM Tips (4-6GB):
         "--disable-ocr-models",
         action="store_true",
         help="Disable OCR models for marker (saves ~1.5GB VRAM, for digital PDFs only)",
+    )
+    parser.add_argument(
+        "--batch-size-1",
+        action="store_true",
+        help="Use batch_size=1 for minimal VRAM usage (slowest but most stable)",
     )
     parser.add_argument(
         "--existing-files",
@@ -500,6 +508,7 @@ Low VRAM Tips (4-6GB):
             args.recursive,
             disable_ocr_models,
             args.existing_files,
+            args.batch_size_1,
         )
 
     else:

@@ -39,6 +39,7 @@ def _get_cached_converter(
     device: str = "auto",
     disable_ocr_models: bool = False,
     low_vram: bool = False,
+    batch_size_1: bool = False,
 ):
     """Get or create a cached converter instance.
 
@@ -54,6 +55,7 @@ def _get_cached_converter(
         device,
         disable_ocr_models,
         low_vram,
+        batch_size_1,
     )
 
     if cache_key not in _converter_cache:
@@ -67,6 +69,7 @@ def _get_cached_converter(
                 device=device,
                 disable_ocr_models=disable_ocr_models,
                 low_vram=low_vram,
+                batch_size=1 if batch_size_1 else None,
             )
         elif converter_type == "docx":
             from .converter import DocxConverter
@@ -162,6 +165,7 @@ def convert_file(
                     device=device,
                     disable_ocr_models=disable_ocr_models,
                     low_vram=low_vram,
+                    batch_size_1=False,  # convert_file不需要batch_size_1
                 )
             else:
                 from .converter import MarkerPDFConverter
@@ -220,6 +224,7 @@ def convert_directory(
     disable_ocr_models: bool = False,
     low_vram: bool = False,
     existing_files: str = "ask",
+    batch_size_1: bool = False,
     on_progress: callable | None = None,
 ) -> ToolResult:
     """Batch-convert all PDF/DOCX files in a directory with optimized memory management.
@@ -246,6 +251,8 @@ def convert_directory(
         Enable low VRAM mode with GPU offloading.
     existing_files : str
         How to handle existing output files: 'ask', 'overwrite', 'skip', or 'update'.
+    batch_size_1 : bool
+        Use batch_size=1 for minimal VRAM usage (slowest but most stable).
     on_progress : callable or None
         Progress callback: on_progress(current, total, filename, success)
 
@@ -486,7 +493,8 @@ def convert_directory(
                 langs=langs,
                 device=device,
                 disable_ocr_models=disable_ocr_models,
-                use_cache=True,
+                low_vram=low_vram,
+                use_cache=not batch_size_1,  # batch_size_1时不使用缓存
             )
 
             if r.success:
@@ -520,6 +528,7 @@ def convert_directory(
                             langs=langs,
                             device="cpu",
                             disable_ocr_models=disable_ocr_models,
+                            low_vram=False,  # CPU模式不需要low_vram
                             use_cache=False,
                         )
                         if r_cpu.success:
@@ -570,6 +579,7 @@ def convert_directory(
                         langs=langs,
                         device="cpu",
                         disable_ocr_models=disable_ocr_models,
+                        low_vram=False,  # CPU模式不需要low_vram
                         use_cache=False,
                     )
                     if r.success:
