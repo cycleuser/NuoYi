@@ -545,6 +545,8 @@ class MarkerPDFConverter:
 
             print(f"[Memory] Layout model: {gpu_device} ({model_dtype})")
             print(f"[Memory] OCR models: {cpu_device} (offloaded)")
+            if self.low_vram:
+                print(f"[Memory] Batch sizes: layout=4, ocr=12 (optimized for low VRAM)")
 
             return {
                 "layout_model": LayoutPredictor(layout_foundation),
@@ -552,6 +554,9 @@ class MarkerPDFConverter:
                 "table_rec_model": TableRecPredictor(device=cpu_device, dtype=torch.float32),
                 "detection_model": DetectionPredictor(device=cpu_device, dtype=torch.float32),
                 "ocr_error_model": OCRErrorPredictor(device=cpu_device, dtype=torch.float32),
+                # Optimize batch sizes for low VRAM
+                "layout_batch_size": 4 if self.low_vram else None,  # Default 12 -> 4
+                "recognition_batch_size": 12 if self.low_vram else None,  # Default 48 -> 12
             }
         except Exception as e:
             print(f"[Memory] Offloading failed: {e}")
