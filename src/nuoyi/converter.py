@@ -682,21 +682,33 @@ class MarkerPDFConverter:
 
             self._file_count += 1
 
-            if self.low_vram or self._file_count % 3 == 0:
-                clear_gpu_memory()
+            result_text = clean_markdown(text)
+            result_images = images or {}
 
-                try:
-                    import torch
+            del rendered
+            del text
+            del images
 
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+            try:
+                import torch
+                import gc
+
+                gc.collect()
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+
+                    if self.low_vram:
                         allocated = torch.cuda.memory_allocated(0) / 1024**3
                         if allocated > 2.0:
-                            aggressive_memory_cleanup()
-                except Exception:
-                    pass
+                            torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
+                            gc.collect()
+            except Exception:
+                pass
 
-            return clean_markdown(text), images or {}
+            return result_text, result_images
 
         except RuntimeError as e:
             error_msg = str(e)
@@ -730,7 +742,25 @@ class MarkerPDFConverter:
                         rendered = self.converter(pdf_path)
                         text, _, images = text_from_rendered(rendered)
 
-                        return clean_markdown(text), images or {}
+                        result_text = clean_markdown(text)
+                        result_images = images or {}
+
+                        del rendered
+                        del text
+                        del images
+
+                        try:
+                            import torch
+                            import gc
+
+                            gc.collect()
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                                torch.cuda.synchronize()
+                        except Exception:
+                            pass
+
+                        return result_text, result_images
                 except Exception as retry_error:
                     if "out of memory" in str(retry_error).lower():
                         raise RuntimeError(

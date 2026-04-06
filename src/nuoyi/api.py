@@ -422,7 +422,21 @@ def convert_directory(
                 error_msg = r.error or "Unknown error"
                 if "CUDA OOM" in error_msg or "CUDA out of memory" in error_msg:
                     print(f"[Batch] ✗ {filename}: CUDA OOM")
-                    print(f"[Batch] Attempting fallback to CPU...")
+                    print(f"[Batch] Attempting CPU fallback...")
+
+                    try:
+                        import torch
+                        import gc
+
+                        clear_converter_cache()
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
+                            print(f"[Batch] GPU memory cleared")
+                    except Exception:
+                        pass
+
                     try:
                         r_cpu = convert_file(
                             f,
@@ -458,7 +472,21 @@ def convert_directory(
             error_msg = str(e)
             if "CUDA OOM" in error_msg or "CUDA out of memory" in error_msg:
                 print(f"[Batch] ✗ {filename}: CUDA OOM")
-                print(f"[Batch] Attempting fallback to CPU...")
+                print(f"[Batch] Attempting CPU fallback...")
+
+                try:
+                    import torch
+                    import gc
+
+                    clear_converter_cache()
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                        print(f"[Batch] GPU memory cleared")
+                except Exception:
+                    pass
+
                 try:
                     r = convert_file(
                         f,
