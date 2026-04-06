@@ -104,6 +104,12 @@ nuoyi paper.pdf --page-range "0-5,10,15-20"
 
 # Specify languages
 nuoyi paper.pdf --langs "zh,en,ja"
+
+# Disable OCR models for digital PDFs (saves ~1.5GB VRAM)
+nuoyi paper.pdf --disable-ocr-models
+
+# Low VRAM mode for 4-6GB GPUs
+nuoyi paper.pdf --low-vram
 ```
 
 ### GUI Mode
@@ -141,13 +147,29 @@ The GUI provides:
 ```python
 from nuoyi import MarkerPDFConverter, DocxConverter
 
-# Convert PDF
+# Convert PDF (full models, ~3GB VRAM)
 pdf_converter = MarkerPDFConverter(
     force_ocr=False,
     langs="zh,en",
     device="auto"  # or "cpu", "cuda", "mps"
 )
 markdown_text, images = pdf_converter.convert_file("input.pdf")
+
+# Convert PDF (minimal models for digital PDFs, ~1.5GB VRAM)
+pdf_converter_minimal = MarkerPDFConverter(
+    disable_ocr_models=True,  # Saves ~1.5GB VRAM
+    langs="zh,en",
+    device="auto"
+)
+markdown_text, images = pdf_converter_minimal.convert_file("digital.pdf")
+
+# Convert PDF (low VRAM mode)
+pdf_converter_low_vram = MarkerPDFConverter(
+    low_vram=True,
+    langs="zh,en",
+    device="auto"
+)
+markdown_text, images = pdf_converter_low_vram.convert_file("input.pdf")
 
 # Convert DOCX
 docx_converter = DocxConverter()
@@ -183,6 +205,8 @@ Use `nuoyi --list-langs` to see the full list. Default: `zh,en`.
 | `--list-langs` | List all supported languages and exit |
 | `--batch` | Process all PDF/DOCX files in the input directory |
 | `--device` | Device for model inference: auto (default), cpu, cuda, or mps |
+| `--low-vram` | Enable low VRAM mode for 4-6GB GPUs |
+| `--disable-ocr-models` | Disable OCR models for digital PDFs (~1.5GB VRAM saved) |
 | `--gui` | Launch PySide6 GUI mode |
 | `-V, --version` | Show version and exit |
 
@@ -195,7 +219,36 @@ NuoYi automatically manages GPU memory:
 - **CUDA mode**: Forces GPU processing (may OOM on large PDFs)
 - **MPS mode**: For Apple Silicon Macs
 
-If CUDA out of memory occurs during conversion, NuoYi automatically falls back to CPU.
+### Low VRAM Options
+
+For GPUs with limited VRAM (4-6GB):
+
+1. **Use `--low-vram` flag**: Enables aggressive memory optimization
+   ```bash
+   nuoyi paper.pdf --low-vram
+   ```
+
+2. **Disable OCR models** (for digital PDFs only): Saves ~1.5GB VRAM
+   ```bash
+   nuoyi paper.pdf --disable-ocr-models
+   ```
+   
+   ⚠️ **Warning**: This disables OCR features. Only suitable for:
+   - Digital PDFs with embedded text (not scanned documents)
+   - PDFs without complex tables requiring OCR
+   - PDFs without mathematical formulas requiring OCR
+
+3. **Use CPU mode**: No VRAM limitation but slower
+   ```bash
+   nuoyi paper.pdf --device cpu
+   ```
+
+4. **Use pymupdf engine**: Fast, no GPU required
+   ```bash
+   nuoyi paper.pdf --engine pymupdf
+   ```
+
+If CUDA out of memory occurs during conversion, NuoYi automatically retries with aggressive memory cleanup.
 
 ## Dependencies
 

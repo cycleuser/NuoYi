@@ -104,6 +104,12 @@ nuoyi paper.pdf --page-range "0-5,10,15-20"
 
 # 指定语言
 nuoyi paper.pdf --langs "zh,en,ja"
+
+# 禁用 OCR 模型（数字版 PDF，节省约 1.5GB 显存）
+nuoyi paper.pdf --disable-ocr-models
+
+# 低显存模式（4-6GB 显存）
+nuoyi paper.pdf --low-vram
 ```
 
 ### 图形界面模式
@@ -141,13 +147,29 @@ nuoyi --gui
 ```python
 from nuoyi import MarkerPDFConverter, DocxConverter
 
-# 转换 PDF
+# 转换 PDF（完整模型，约 3GB 显存）
 pdf_converter = MarkerPDFConverter(
     force_ocr=False,
     langs="zh,en",
     device="auto"  # 或 "cpu", "cuda", "mps"
 )
 markdown_text, images = pdf_converter.convert_file("input.pdf")
+
+# 转换 PDF（精简模型，数字版 PDF，约 1.5GB 显存）
+pdf_converter_minimal = MarkerPDFConverter(
+    disable_ocr_models=True,  # 节省约 1.5GB 显存
+    langs="zh,en",
+    device="auto"
+)
+markdown_text, images = pdf_converter_minimal.convert_file("digital.pdf")
+
+# 转换 PDF（低显存模式）
+pdf_converter_low_vram = MarkerPDFConverter(
+    low_vram=True,
+    langs="zh,en",
+    device="auto"
+)
+markdown_text, images = pdf_converter_low_vram.convert_file("input.pdf")
 
 # 转换 DOCX
 docx_converter = DocxConverter()
@@ -183,6 +205,8 @@ markdown_text = docx_converter.convert_file("input.docx")
 | `--list-langs` | 列出所有支持的语言并退出 |
 | `--batch` | 处理输入目录中的所有 PDF/DOCX 文件 |
 | `--device` | 模型推理设备：auto（默认）、cpu、cuda 或 mps |
+| `--low-vram` | 启用低显存模式（4-6GB 显存） |
+| `--disable-ocr-models` | 禁用 OCR 模型（数字版 PDF，节省约 1.5GB 显存） |
 | `--gui` | 启动 PySide6 图形界面 |
 | `-V, --version` | 显示版本号并退出 |
 
@@ -195,7 +219,36 @@ NuoYi 自动管理 GPU 内存：
 - **CUDA 模式**：强制使用 GPU 处理（大型 PDF 可能会显存不足）
 - **MPS 模式**：适用于 Apple Silicon Mac
 
-如果转换过程中发生 CUDA 显存不足，NuoYi 会自动切换到 CPU 继续处理。
+### 低显存选项
+
+对于显存有限的 GPU（4-6GB）：
+
+1. **使用 `--low-vram` 标志**：启用激进的内存优化
+   ```bash
+   nuoyi paper.pdf --low-vram
+   ```
+
+2. **禁用 OCR 模型**（仅限数字版 PDF）：节省约 1.5GB 显存
+   ```bash
+   nuoyi paper.pdf --disable-ocr-models
+   ```
+   
+   ⚠️ **注意**：此选项会禁用 OCR 功能，仅适用于：
+   - 带有嵌入文本的数字版 PDF（非扫描文档）
+   - 不需要 OCR 的简单表格 PDF
+   - 不需要 OCR 的数学公式 PDF
+
+3. **使用 CPU 模式**：无显存限制但速度较慢
+   ```bash
+   nuoyi paper.pdf --device cpu
+   ```
+
+4. **使用 pymupdf 引擎**：快速、无需 GPU
+   ```bash
+   nuoyi paper.pdf --engine pymupdf
+   ```
+
+如果转换过程中发生 CUDA 显存不足，NuoYi 会自动重试并清理内存。
 
 ## 依赖项
 

@@ -45,6 +45,7 @@ from .utils import (
     print_device_info,
     prompt_kill_cuda_processes,
     save_images_and_update_markdown,
+    setup_memory_optimization,
 )
 
 
@@ -57,6 +58,7 @@ def convert_single_file(
     device: str = "auto",
     low_vram: bool = False,
     engine: str = "auto",
+    disable_ocr_models: bool = False,
 ):
     """Convert a single PDF or DOCX file."""
     suffix = input_path.suffix.lower()
@@ -70,6 +72,7 @@ def convert_single_file(
             langs=langs,
             device=device,
             low_vram=low_vram,
+            disable_ocr_models=disable_ocr_models,
         )
         content, images = converter.convert_file(str(input_path))
 
@@ -104,9 +107,18 @@ def convert_directory(
     low_vram: bool = False,
     engine: str = "auto",
     recursive: bool = False,
+    disable_ocr_models: bool = False,
 ):
     """Batch convert all PDF/DOCX files in a directory."""
-    from .utils import create_output_directories, find_documents, get_output_path
+    import gc
+
+    from .utils import (
+        aggressive_memory_cleanup,
+        create_output_directories,
+        find_documents,
+        get_current_memory_usage,
+        get_output_path,
+    )
 
     files = find_documents(input_dir, recursive=recursive)
     if not files:
@@ -124,6 +136,7 @@ def convert_directory(
     docx_files = [f for f in files if f.suffix.lower() == ".docx"]
 
     if pdf_files:
+        print(f"[Batch] Initializing converter for {len(pdf_files)} PDF files...")
         pdf_converter = get_converter(
             engine=engine,
             force_ocr=force_ocr,
@@ -131,13 +144,23 @@ def convert_directory(
             langs=langs,
             device=device,
             low_vram=low_vram,
+            disable_ocr_models=disable_ocr_models,
         )
+
+        mem_info = get_current_memory_usage()
+        if mem_info.get("available"):
+            print(f"[Memory] Converter ready: {mem_info['allocated_gb']:.1f}GB used")
+
+        print()
 
     if docx_files:
         docx_converter = DocxConverter()
 
     success = 0
     failed = 0
+    oom_errors = 0
+
+    cleanup_interval = 10 if low_vram else 20
 
     for i, file_path in enumerate(files, 1):
         suffix = file_path.suffix.lower()
@@ -174,11 +197,49 @@ def convert_directory(
             print("OK")
             success += 1
 
+            del content
+            del images
+            gc.collect()
+
+            if i % cleanup_interval == 0:
+                print(f"\n[Memory] Periodic cleanup ({i}/{len(files)} files processed)")
+                aggressive_memory_cleanup()
+
+                mem_info = get_current_memory_usage()
+                if mem_info.get("available"):
+                    print(
+                        f"[Memory] Current usage: {mem_info['allocated_gb']:.1f}GB / {mem_info['total_gb']:.1f}GB"
+                    )
+                print()
+
+        except RuntimeError as e:
+            error_msg = str(e)
+
+            if "out of memory" in error_msg.lower() or "CUDA out of memory" in error_msg.lower():
+                oom_errors += 1
+                print(f"OOM Error: {error_msg[:100]}...")
+
+                aggressive_memory_cleanup()
+
+                print("[Memory] Cleared cache. Try using --low-vram or --device cpu")
+                failed += 1
+            else:
+                print(f"ERROR: {error_msg[:100]}")
+                failed += 1
+
         except Exception as e:
-            print(f"ERROR: {e}")
+            print(f"ERROR: {str(e)[:100]}")
             failed += 1
 
-    print(f"\nBatch complete: {success} succeeded, {failed} failed.")
+    if pdf_converter and hasattr(pdf_converter, "cleanup"):
+        print("\n[Memory] Final cleanup...")
+        pdf_converter.cleanup()
+        aggressive_memory_cleanup()
+
+    print(f"\nBatch complete: {success} succeeded, {failed} failed")
+    if oom_errors > 0:
+        print(f"  OOM errors: {oom_errors}")
+        print("  Suggestion: Use --low-vram flag or --device cpu")
     if recursive:
         print("Output directory structure preserved with '_md' suffix on subdirectories.")
 
@@ -298,6 +359,11 @@ Low VRAM Tips (4-6GB):
         help="GPU device: cuda (NVIDIA), directml (AMD Windows), rocm (AMD Linux), mps/mlx (Apple), cpu",
     )
     parser.add_argument("--low-vram", action="store_true", help="Low VRAM mode (4-6GB GPUs)")
+    parser.add_argument(
+        "--disable-ocr-models",
+        action="store_true",
+        help="Disable OCR models for marker (saves ~1.5GB VRAM, for digital PDFs only)",
+    )
     parser.add_argument("--gui", action="store_true", help="Launch GUI")
     parser.add_argument("--web", action="store_true", help="Launch Web Interface")
     parser.add_argument("--host", default="0.0.0.0", help="Web server host (default: 0.0.0.0)")
@@ -320,8 +386,8 @@ Low VRAM Tips (4-6GB):
         try:
             from .directml_backend import (
                 get_directml_install_instructions,
-                is_polaris_gpu,
                 get_polaris_vram,
+                is_polaris_gpu,
                 setup_directml_for_torch,
                 test_directml,
             )
@@ -447,6 +513,14 @@ Low VRAM Tips (4-6GB):
     device = args.device
     low_vram = args.low_vram
     engine = args.engine
+    disable_ocr_models = args.disable_ocr_models
+
+    if disable_ocr_models and force_ocr:
+        print("Warning: --disable-ocr-models conflicts with --force-ocr")
+        print("         OCR models disabled, force_ocr will be ignored")
+        force_ocr = False
+
+    setup_memory_optimization(low_vram=low_vram)
 
     should_check_cuda = device in ("auto", "cuda") and engine in (
         "auto",
@@ -455,7 +529,7 @@ Low VRAM Tips (4-6GB):
         "docling",
     )
     if should_check_cuda:
-        min_vram = 3.0 if low_vram else 5.0
+        min_vram = 2.0 if low_vram else 4.0
         if not prompt_kill_cuda_processes(min_free_vram_gb=min_vram):
             print("Aborted.")
             sys.exit(0)
@@ -470,6 +544,8 @@ Low VRAM Tips (4-6GB):
             print(f"Device: {device}")
             if low_vram:
                 print("Low VRAM: True (optimized for 4-6GB)")
+            if disable_ocr_models:
+                print("OCR Models: Disabled (digital PDFs only, saves ~1.5GB)")
         if force_ocr:
             print("Force OCR: True")
         if page_range:
@@ -477,7 +553,15 @@ Low VRAM Tips (4-6GB):
         print()
 
         convert_single_file(
-            input_path, output_path, force_ocr, page_range, langs, device, low_vram, engine
+            input_path,
+            output_path,
+            force_ocr,
+            page_range,
+            langs,
+            device,
+            low_vram,
+            engine,
+            disable_ocr_models,
         )
 
     elif input_path.is_dir():
@@ -493,6 +577,8 @@ Low VRAM Tips (4-6GB):
             print(f"Device: {device}")
             if low_vram:
                 print("Low VRAM: True (optimized for 4-6GB)")
+            if disable_ocr_models:
+                print("OCR Models: Disabled (digital PDFs only, saves ~1.5GB)")
         if args.recursive:
             print("Recursive: True")
         print()
@@ -507,6 +593,7 @@ Low VRAM Tips (4-6GB):
             low_vram,
             engine,
             args.recursive,
+            disable_ocr_models,
         )
 
     else:

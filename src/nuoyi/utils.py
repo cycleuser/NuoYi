@@ -312,6 +312,86 @@ def clear_gpu_memory():
         gc.collect()
 
 
+def aggressive_memory_cleanup():
+    """Aggressive GPU memory cleanup for OOM recovery."""
+    import gc
+
+    gc.collect()
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+
+            if hasattr(torch.cuda, "reset_peak_memory_stats"):
+                torch.cuda.reset_peak_memory_stats()
+
+            torch.cuda.ipc_collect()
+
+    except Exception:
+        pass
+
+    gc.collect()
+
+
+def check_memory_available(required_mb: float) -> tuple[bool, float]:
+    """Check if enough GPU memory is available.
+
+    Returns:
+        (is_available, free_memory_mb)
+    """
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return (True, float("inf"))
+
+        total, free_gb = get_gpu_memory_info()
+        free_mb = free_gb * 1024
+
+        if free_mb >= required_mb:
+            return (True, free_mb)
+
+        aggressive_memory_cleanup()
+
+        total, free_gb = get_gpu_memory_info()
+        free_mb = free_gb * 1024
+
+        return (free_mb >= required_mb, free_mb)
+
+    except Exception:
+        return (True, float("inf"))
+
+
+def get_current_memory_usage() -> dict:
+    """Get current GPU memory usage details."""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return {"available": False}
+
+        device = torch.cuda.current_device()
+
+        total = torch.cuda.get_device_properties(device).total_memory / (1024**3)
+        reserved = torch.cuda.memory_reserved(device) / (1024**3)
+        allocated = torch.cuda.memory_allocated(device) / (1024**3)
+        free = total - reserved
+
+        return {
+            "available": True,
+            "total_gb": round(total, 2),
+            "reserved_gb": round(reserved, 2),
+            "allocated_gb": round(allocated, 2),
+            "free_gb": round(free, 2),
+            "utilization_pct": round(allocated / total * 100, 1),
+        }
+    except Exception:
+        return {"available": False}
+
+
 def clear_mlx_memory():
     """Release MLX memory cache."""
     try:
@@ -797,7 +877,7 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
 
         if torch_vulkan:
             device_count = get_torch_vulkan_device_count()
-            print(f"[Device] PyTorch Vulkan backend available!")
+            print("[Device] PyTorch Vulkan backend available!")
             print(f"[Device] Vulkan devices: {vulkan_devices}")
             print(f"[Device] Device count: {device_count}")
 
@@ -808,22 +888,22 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
             ]
             if amd_devices:
                 print(f"[Device] AMD GPU(s) detected: {amd_devices}")
-                print(f"[Device] Using Vulkan for AMD GPU acceleration")
+                print("[Device] Using Vulkan for AMD GPU acceleration")
 
             os.environ["TORCH_DEVICE"] = "vulkan"
             return "vulkan"
 
         if is_vulkan_available():
             print(f"[Device] System Vulkan available: {vulkan_devices}")
-            print(f"[Device] PyTorch Vulkan backend NOT compiled in")
-            print(f"[Device]")
+            print("[Device] PyTorch Vulkan backend NOT compiled in")
+            print("[Device]")
             print(
-                f"[Device] To use Vulkan with PyTorch, you need to compile PyTorch with Vulkan support:"
+                "[Device] To use Vulkan with PyTorch, you need to compile PyTorch with Vulkan support:"
             )
-            print(f"[Device]   1. Run: scripts\\build_vulkan_pytorch.ps1")
-            print(f"[Device]   Or see: BUILD_VULKAN_PYTORCH.md")
-            print(f"[Device]")
-            print(f"[Device] Falling back to CPU...")
+            print("[Device]   1. Run: scripts\\build_vulkan_pytorch.ps1")
+            print("[Device]   Or see: BUILD_VULKAN_PYTORCH.md")
+            print("[Device]")
+            print("[Device] Falling back to CPU...")
 
             optimize_for_cpu_inference()
             return "cpu"
@@ -852,16 +932,16 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
 
             try:
                 from .directml_backend import (
-                    is_polaris_gpu,
-                    get_polaris_vram,
                     configure_marker_for_directml,
+                    get_polaris_vram,
+                    is_polaris_gpu,
                 )
 
                 if is_polaris_gpu(device_name):
                     vram = get_polaris_vram(device_name)
-                    print(f"[Device] Polaris GPU detected (RX400/500 series)")
+                    print("[Device] Polaris GPU detected (RX400/500 series)")
                     print(f"[Device] VRAM: {vram:.1f}GB - This GPU does NOT support ROCm")
-                    print(f"[Device] DirectML is the ONLY GPU option on Windows")
+                    print("[Device] DirectML is the ONLY GPU option on Windows")
 
                     if vram <= LOW_VRAM_THRESHOLD_GB:
                         print(f"[Device] Low VRAM mode enabled for {vram:.1f}GB")
@@ -869,7 +949,7 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
 
                     config = configure_marker_for_directml(low_vram=(vram <= LOW_VRAM_THRESHOLD_GB))
                     if config.get("torch_patched"):
-                        print(f"[Device] PyTorch patched for DirectML successfully")
+                        print("[Device] PyTorch patched for DirectML successfully")
                 else:
                     total_vram = _estimate_vram_from_gpu_name(device_name or "")
                     if total_vram <= LOW_VRAM_THRESHOLD_GB:
@@ -943,7 +1023,7 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
             if total <= LOW_VRAM_THRESHOLD_GB:
                 enable_low_vram_mode()
 
-            print(f"[Device] Auto-selected: ROCm (AMD)")
+            print("[Device] Auto-selected: ROCm (AMD)")
             return "cuda"
 
         if device_info["cuda"]["available"]:
@@ -953,7 +1033,7 @@ def select_device(preferred: str = "auto", min_vram_gb: float = 6.0) -> str:
             if total <= LOW_VRAM_THRESHOLD_GB:
                 enable_low_vram_mode()
 
-            print(f"[Device] Auto-selected: CUDA")
+            print("[Device] Auto-selected: CUDA")
             return "cuda"
 
         if device_info["directml"]["available"]:
@@ -1001,6 +1081,11 @@ def _setup_rocm_env():
     os.environ["ROCM_PATH"] = os.environ.get("ROCM_PATH", "/opt/rocm")
 
 
+def _setup_directml_env():
+    """Set up environment variables for DirectML."""
+    os.environ["TORCH_DEVICE"] = "cuda"
+
+
 def get_directml_info() -> dict:
     """Get detailed DirectML information."""
     info = {
@@ -1026,7 +1111,7 @@ def get_directml_info() -> dict:
         info["device_name"] = name
 
         try:
-            from .directml_backend import is_polaris_gpu, get_polaris_vram
+            from .directml_backend import get_polaris_vram, is_polaris_gpu
 
             info["is_polaris"] = is_polaris_gpu(name)
             if info["is_polaris"]:

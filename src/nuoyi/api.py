@@ -38,6 +38,7 @@ def convert_file(
     page_range: str | None = None,
     langs: str = "zh,en",
     device: str = "auto",
+    disable_ocr_models: bool = False,
 ) -> ToolResult:
     """Convert a single PDF or DOCX file to Markdown.
 
@@ -55,6 +56,8 @@ def convert_file(
         Comma-separated language codes.
     device : str
         Compute device: auto, cuda, rocm, mps, mlx, or cpu.
+    disable_ocr_models : bool
+        Disable OCR models for marker (saves ~1.5GB VRAM, for digital PDFs only).
 
     Returns
     -------
@@ -89,6 +92,7 @@ def convert_file(
                 page_range=page_range,
                 langs=langs,
                 device=device,
+                disable_ocr_models=disable_ocr_models,
             )
             content, images = converter.convert_file(str(input_path))
         else:
@@ -128,6 +132,7 @@ def convert_directory(
     langs: str = "zh,en",
     device: str = "auto",
     recursive: bool = False,
+    disable_ocr_models: bool = False,
 ) -> ToolResult:
     """Batch-convert all PDF/DOCX files in a directory.
 
@@ -147,6 +152,8 @@ def convert_directory(
         Compute device: auto, cuda, rocm, mps, mlx, or cpu.
     recursive : bool
         If True, search subdirectories recursively.
+    disable_ocr_models : bool
+        Disable OCR models for marker (saves ~1.5GB VRAM, for digital PDFs only).
 
     Returns
     -------
@@ -189,6 +196,7 @@ def convert_directory(
             page_range=page_range,
             langs=langs,
             device=device,
+            disable_ocr_models=disable_ocr_models,
         )
         results.append(
             {

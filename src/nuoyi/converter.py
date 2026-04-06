@@ -36,19 +36,20 @@ Memory Optimization for Low VRAM (4-6GB):
 
 from __future__ import annotations
 
-import gc
 import os
 from typing import TYPE_CHECKING
 
 from .utils import (
     DEFAULT_LANGS,
     LOW_VRAM_THRESHOLD_GB,
+    VERY_LOW_VRAM_THRESHOLD_GB,
+    aggressive_memory_cleanup,
     clean_markdown,
     clear_gpu_memory,
-    clear_mlx_memory,
     enable_low_vram_mode,
+    enable_very_low_vram_mode,
+    get_current_memory_usage,
     get_gpu_memory_info,
-    get_recommended_batch_size,
     get_rocm_memory_info,
     is_amd_gpu_available,
     is_directml_available,
@@ -58,11 +59,10 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    pass
 
 setup_memory_optimization()
 
-import fitz
 from docx import Document
 
 SUPPORTED_ENGINES = [
@@ -425,8 +425,15 @@ class MarkerPDFConverter:
     Type: Local, Free, Offline
     GPU: Recommended (4GB+ VRAM), supports AMD via DirectML/ROCm
     OCR: Yes
-    Models: ~3GB
+    Models: ~3GB (full), ~1.5GB (minimal without OCR)
     Install: pip install marker-pdf
+
+    Memory Management:
+    - Lazy model loading (only loads when first file is processed)
+    - Automatic memory cleanup after each file
+    - OOM recovery with retry mechanism
+    - Low VRAM optimization (<6GB)
+    - Minimal model mode for digital PDFs (no OCR/table models)
     """
 
     def __init__(
@@ -437,34 +444,252 @@ class MarkerPDFConverter:
         device: str = "auto",
         low_vram: bool = False,
         batch_size: int | None = None,
+        disable_ocr_models: bool = False,
     ):
         self.force_ocr = force_ocr
         self.page_range = page_range
         self.langs = langs
         self.low_vram = low_vram
         self.batch_size = batch_size
+        self.disable_ocr_models = disable_ocr_models
         self.converter = None
         self.artifact_dict = None
-        self.device = "cuda"
-        self._load_models()
+        self.device = self._select_device_with_memory_check(device)
+        self._models_loaded = False
+        self._file_count = 0
+
+        if self.disable_ocr_models:
+            print("[Memory] OCR models disabled - suitable for digital PDFs only")
+
+        if self.low_vram:
+            self._setup_low_vram_mode()
+
+    def _select_device_with_memory_check(self, device: str) -> str:
+        """Select device based on available memory."""
+        selected = select_device(device)
+
+        if selected == "cuda":
+            try:
+                total, free = get_gpu_memory_info()
+                if total <= 0 and is_rocm_available():
+                    total, free = get_rocm_memory_info()
+
+                print(f"[Memory] GPU detected: {total:.1f}GB total, {free:.1f}GB free")
+
+                if total <= LOW_VRAM_THRESHOLD_GB:
+                    print(f"[Memory] Low VRAM mode auto-enabled (<{LOW_VRAM_THRESHOLD_GB}GB)")
+                    self.low_vram = True
+                elif total <= VERY_LOW_VRAM_THRESHOLD_GB:
+                    print(
+                        f"[Memory] Very low VRAM mode auto-enabled (<{VERY_LOW_VRAM_THRESHOLD_GB}GB)"
+                    )
+                    self.low_vram = True
+                    enable_very_low_vram_mode()
+
+            except Exception:
+                pass
+
+        return selected
+
+    def _setup_low_vram_mode(self):
+        """Setup optimizations for low VRAM."""
+        print("[Memory] Enabling low VRAM optimizations...")
+
+        enable_low_vram_mode()
+
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.set_per_process_memory_fraction(0.7, 0)
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+        if self.batch_size is None:
+            self.batch_size = 1
 
     def _load_models(self):
-        from marker.models import create_model_dict
+        """Lazy load models on first use."""
+        if self._models_loaded:
+            return
+
+        if self.disable_ocr_models:
+            print("[Memory] Loading marker-pdf minimal models (~1.5GB, no OCR)...")
+        else:
+            print("[Memory] Loading marker-pdf full models (~3GB)...")
+        print("(First run downloads models)")
+
+        try:
+            total, free = get_gpu_memory_info()
+            if total > 0:
+                print(f"[Memory] Before loading: {free:.1f}GB free")
+
+                min_required = 1.0 if self.disable_ocr_models else 2.0
+                if free < min_required:
+                    print(f"[Memory] WARNING: Low free memory ({free:.1f}GB)")
+                    print("[Memory] Running aggressive cleanup...")
+                    aggressive_memory_cleanup()
+
+                    total, free = get_gpu_memory_info()
+                    print(f"[Memory] After cleanup: {free:.1f}GB free")
+
+                    min_required_after = 0.8 if self.disable_ocr_models else 1.5
+                    if free < min_required_after:
+                        raise RuntimeError(
+                            f"Insufficient GPU memory: {free:.1f}GB free. "
+                            f"Need at least {min_required_after}GB for model loading. "
+                            f"Suggestions:\n"
+                            f"  1. Use --device cpu\n"
+                            f"  2. Use --engine pymupdf (no GPU)\n"
+                            f"  3. Use --disable-ocr-models for digital PDFs\n"
+                            f"  4. Close other GPU applications"
+                        )
+        except Exception:
+            pass
+
         from marker.converters.pdf import PdfConverter
 
-        print("Loading marker-pdf models...")
-        print("(First run downloads ~2-3 GB)")
+        if self.disable_ocr_models:
+            self.artifact_dict = self._create_minimal_model_dict()
+            print("[Memory] Minimal models loaded (layout only, ~1.5GB)")
+        else:
+            from marker.models import create_model_dict
 
-        self.artifact_dict = create_model_dict()
+            self.artifact_dict = create_model_dict()
+            print("[Memory] Full models loaded (all features, ~3GB)")
+
         self.converter = PdfConverter(artifact_dict=self.artifact_dict)
-        print("Models loaded.")
+
+        self._models_loaded = True
+
+        try:
+            mem_info = get_current_memory_usage()
+            if mem_info.get("available"):
+                print(
+                    f"[Memory] After loading: {mem_info['allocated_gb']:.1f}GB used, {mem_info['free_gb']:.1f}GB free"
+                )
+        except Exception:
+            pass
+
+        print("[Memory] Models ready for conversion.")
+
+    def _create_minimal_model_dict(self) -> dict:
+        """Create minimal model dict without OCR models for digital PDFs.
+
+        This loads only layout model (~1.5GB), saving ~1.5GB VRAM.
+        Suitable for digital PDFs that don't need OCR.
+
+        Warning: OCR-related features won't work with minimal models.
+        """
+        try:
+            from surya.model.layout_predictor import LayoutPredictor
+
+            print("[Memory] Creating minimal model dict (layout only)...")
+
+            layout_model = LayoutPredictor(device=self.device if self.device != "auto" else None)
+
+            return {
+                "layout_model": layout_model,
+                "recognition_model": None,
+                "table_rec_model": None,
+                "detection_model": None,
+                "ocr_error_model": None,
+            }
+        except Exception as e:
+            print(f"[Memory] Failed to create minimal models: {e}")
+            print("[Memory] Falling back to full models...")
+            from marker.models import create_model_dict
+
+            return create_model_dict()
 
     def convert_file(self, pdf_path: str) -> tuple[str, dict]:
-        from marker.output import text_from_rendered
+        """Convert PDF file with memory management and OOM handling."""
+        self._load_models()
 
-        rendered = self.converter(pdf_path)
-        text, _, images = text_from_rendered(rendered)
-        return clean_markdown(text), images or {}
+        max_retries = 2
+        oom_count = 0
+
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt > 0:
+                    print(f"[Memory] Retry attempt {attempt}/{max_retries}")
+                    aggressive_memory_cleanup()
+
+                    mem_info = get_current_memory_usage()
+                    if mem_info.get("available"):
+                        print(f"[Memory] Free memory: {mem_info['free_gb']:.1f}GB")
+
+                from marker.output import text_from_rendered
+
+                rendered = self.converter(pdf_path)
+                text, _, images = text_from_rendered(rendered)
+
+                self._file_count += 1
+
+                if self._file_count % 5 == 0 or self.low_vram:
+                    clear_gpu_memory()
+
+                    if self.low_vram:
+                        aggressive_memory_cleanup()
+
+                return clean_markdown(text), images or {}
+
+            except RuntimeError as e:
+                error_msg = str(e)
+
+                if "out of memory" in error_msg.lower() or "CUDA out of memory" in error_msg:
+                    oom_count += 1
+                    print(f"[Memory] OOM error (attempt {oom_count}): {error_msg[:200]}...")
+
+                    if attempt < max_retries:
+                        print("[Memory] Clearing cache and retrying...")
+                        aggressive_memory_cleanup()
+
+                        import time
+
+                        time.sleep(1)
+
+                        continue
+                    else:
+                        print(f"[Memory] OOM after {max_retries} retries")
+                        print("[Memory] Suggestions:")
+                        print("  1. Use --low-vram flag")
+                        print("  2. Use --device cpu")
+                        print("  3. Use --engine pymupdf (no GPU required)")
+                        print("  4. Close other GPU applications")
+                        raise RuntimeError(
+                            f"CUDA OOM after {max_retries} retries. "
+                            f"Try: --low-vram, --device cpu, or --engine pymupdf"
+                        ) from e
+                else:
+                    raise
+
+            except Exception:
+                raise
+
+        raise RuntimeError("Unexpected error in convert_file")
+
+    def cleanup(self):
+        """Explicit cleanup of converter resources."""
+        if self.converter is not None:
+            try:
+                del self.converter
+                self.converter = None
+            except Exception:
+                pass
+
+        if self.artifact_dict is not None:
+            try:
+                del self.artifact_dict
+                self.artifact_dict = None
+            except Exception:
+                pass
+
+        self._models_loaded = False
+        aggressive_memory_cleanup()
+
+        print("[Memory] Converter resources cleaned up")
 
     @staticmethod
     def is_available() -> bool:
@@ -669,6 +894,7 @@ def get_converter(
     langs: str = DEFAULT_LANGS,
     device: str = "auto",
     low_vram: bool = False,
+    disable_ocr_models: bool = False,
     api_key: str | None = None,
     app_id: str | None = None,
     app_key: str | None = None,
@@ -689,6 +915,7 @@ def get_converter(
             - mlx: Apple MLX
             - cpu: CPU only
         low_vram: Low VRAM mode (<6GB)
+        disable_ocr_models: Disable OCR models for marker (saves ~1.5GB, for digital PDFs)
         api_key: API key for LlamaParse
         app_id: App ID for Mathpix
         app_key: App key for Mathpix
@@ -757,13 +984,18 @@ def get_converter(
             if low_vram:
                 vram_info = " [Low VRAM mode]"
 
-            print(f"[Converter] Using marker-pdf (best quality){amd_info}{vram_info}")
+            ocr_info = ""
+            if disable_ocr_models:
+                ocr_info = " [No OCR models - digital PDFs only]"
+
+            print(f"[Converter] Using marker-pdf (best quality){amd_info}{vram_info}{ocr_info}")
             return MarkerPDFConverter(
                 force_ocr=force_ocr,
                 page_range=page_range,
                 langs=langs,
                 device=device,
                 low_vram=low_vram,
+                disable_ocr_models=disable_ocr_models,
             )
 
     raise ImportError(
