@@ -106,7 +106,7 @@ def convert_directory(
     engine: str = "auto",
     recursive: bool = False,
     existing_files: str = "ask",
-    no_cpu_fallback: bool = False,
+    on_oom: str = "fallback",
     pending_file: str | None = None,
 ):
     """Batch convert all PDF/DOCX files in a directory with optimized memory."""
@@ -124,7 +124,7 @@ def convert_directory(
         low_vram=low_vram,
         recursive=recursive,
         existing_files=existing_files,
-        no_cpu_fallback=no_cpu_fallback,
+        on_oom=on_oom,
         pending_file=pending_file,
     )
 
@@ -184,8 +184,9 @@ Examples:
   nuoyi ./papers --batch --existing-files skip      # Skip existing
   nuoyi ./papers --batch --existing-files update    # Only newer files
   nuoyi ./papers --batch --existing-files ask       # Interactive prompt
-  nuoyi ./papers --batch --no-cpu-fallback          # Defer on GPU OOM
-  nuoyi ./papers --batch --no-cpu-fallback --pending-file deferred.json
+  nuoyi ./papers --batch --on-oom fallback          # Try CPU on GPU OOM
+  nuoyi ./papers --batch --on-oom defer --pending-file deferred.json
+  nuoyi ./papers --batch --on-oom fail              # Fail immediately on OOM
   nuoyi --resume-pending deferred.json              # Resume deferred tasks
   nuoyi --gui                            # Launch GUI
   nuoyi --web                            # Launch Web Interface
@@ -269,9 +270,10 @@ Low VRAM Tips (4-6GB):
         help="How to handle existing output files: ask (interactive), overwrite, skip, or update (only if source is newer)",
     )
     parser.add_argument(
-        "--no-cpu-fallback",
-        action="store_true",
-        help="Don't fallback to CPU on GPU OOM. Instead, defer tasks to pending file.",
+        "--on-oom",
+        choices=["fallback", "defer", "fail"],
+        default="defer",
+        help="Action on GPU OOM: defer (default, save to pending list), fallback (try CPU), fail (stop with error)",
     )
     parser.add_argument(
         "--pending-file",
@@ -559,7 +561,7 @@ Low VRAM Tips (4-6GB):
             engine,
             args.recursive,
             args.existing_files,
-            args.no_cpu_fallback,
+            args.on_oom,
             args.pending_file,
         )
 

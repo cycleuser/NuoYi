@@ -439,11 +439,13 @@ class MarkerPDFConverter:
         langs: str = DEFAULT_LANGS,
         device: str = "auto",
         low_vram: bool = False,
+        allow_fallback: bool = False,
     ):
         self.force_ocr = force_ocr
         self.page_range = page_range
         self.langs = langs
         self.low_vram = low_vram
+        self.allow_fallback = allow_fallback
 
         selected_device = select_device(device)
 
@@ -508,7 +510,7 @@ class MarkerPDFConverter:
         except RuntimeError as e:
             error_msg = str(e).lower()
             if "cuda" in error_msg and ("out of memory" in error_msg or "oom" in error_msg):
-                if self.device != "cpu":
+                if self.device != "cpu" and self.allow_fallback:
                     print("\n[WARNING] CUDA out of memory! Falling back to CPU...")
                     print("[WARNING] This will be slower but avoids memory issues.\n")
 
@@ -557,7 +559,7 @@ class MarkerPDFConverter:
         except RuntimeError as e:
             error_msg = str(e).lower()
             if "cuda" in error_msg and ("out of memory" in error_msg or "oom" in error_msg):
-                if self.device != "cpu":
+                if self.device != "cpu" and self.allow_fallback:
                     print("\n[WARNING] CUDA OOM during conversion! Retrying on CPU...")
 
                     clear_gpu_memory()

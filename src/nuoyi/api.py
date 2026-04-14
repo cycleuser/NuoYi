@@ -34,13 +34,14 @@ class ToolResult:
 
 
 def _get_cached_converter(
-    converter_type: str,
+    converter_type,
     *,
-    force_ocr: bool = False,
-    page_range: str | None = None,
-    langs: str = "zh,en",
-    device: str = "auto",
-    low_vram: bool = False,
+    force_ocr=False,
+    page_range=None,
+    langs="zh,en",
+    device="auto",
+    low_vram=False,
+    allow_fallback=False,
 ):
     """Get or create a cached converter instance.
 
@@ -55,6 +56,7 @@ def _get_cached_converter(
         langs,
         device,
         low_vram,
+        allow_fallback,
     )
 
     if cache_key not in _converter_cache:
@@ -67,6 +69,7 @@ def _get_cached_converter(
                 langs=langs,
                 device=device,
                 low_vram=low_vram,
+                allow_fallback=allow_fallback,
             )
         elif converter_type == "docx":
             from .converter import DocxConverter
@@ -149,6 +152,7 @@ def convert_file(
     device: str = "auto",
     low_vram: bool = False,
     use_cache: bool = True,
+    allow_fallback: bool = False,
 ) -> ToolResult:
     """Convert a single PDF or DOCX file to Markdown.
 
@@ -170,6 +174,8 @@ def convert_file(
         Enable low VRAM mode.
     use_cache : bool
         Use cached converter to avoid reloading models (default: True).
+    allow_fallback : bool
+        Allow automatic CPU fallback on GPU OOM (default: False).
 
     Returns
     -------
@@ -206,6 +212,7 @@ def convert_file(
                     langs=langs,
                     device=device,
                     low_vram=low_vram,
+                    allow_fallback=allow_fallback,
                 )
             else:
                 from .converter import MarkerPDFConverter
@@ -216,6 +223,7 @@ def convert_file(
                     langs=langs,
                     device=device,
                     low_vram=low_vram,
+                    allow_fallback=allow_fallback,
                 )
             content, images = converter.convert_file(str(input_path))
         else:
@@ -263,7 +271,7 @@ def convert_directory(
     low_vram: bool = False,
     existing_files: str = "ask",
     on_progress: callable | None = None,
-    no_cpu_fallback: bool = False,
+    on_oom: str = "defer",
     pending_file: str | Path | None = None,
 ) -> ToolResult:
     """Batch-convert all PDF/DOCX files in a directory with optimized memory management.
@@ -290,10 +298,10 @@ def convert_directory(
         How to handle existing output files: 'ask', 'overwrite', 'skip', or 'update'.
     on_progress : callable or None
         Progress callback: on_progress(current, total, filename, success)
-    no_cpu_fallback : bool
-        If True, don't fallback to CPU on GPU OOM. Instead, defer tasks.
+    on_oom : str
+        Action on GPU OOM: 'defer' (default, save to pending list), 'fallback' (try CPU), or 'fail' (stop with error).
     pending_file : str, Path, or None
-        Path to save deferred tasks (used with no_cpu_fallback).
+        Path to save deferred tasks (used with on_oom='defer').
 
     Returns
     -------
@@ -309,7 +317,7 @@ def convert_directory(
     else:
         output_dir = Path(output_dir)
 
-    if no_cpu_fallback and pending_file is None:
+    if on_oom == "defer" and pending_file is None:
         pending_file = output_dir / ".nuoyi_pending.json"
 
     from .utils import create_output_directories, find_documents, get_output_path
@@ -538,6 +546,7 @@ def convert_directory(
                 device=device,
                 low_vram=low_vram,
                 use_cache=True,
+                allow_fallback=(on_oom == "fallback"),
             )
 
             if r.success:
@@ -548,7 +557,7 @@ def convert_directory(
                 if "CUDA OOM" in error_msg or "CUDA out of memory" in error_msg:
                     print(f"[Batch] ✗ {filename}: CUDA OOM")
 
-                    if no_cpu_fallback:
+                    if on_oom == "defer":
                         deferred_count += 1
                         task_info = {
                             "file": str(f),
@@ -565,6 +574,10 @@ def convert_directory(
                         deferred_tasks.append(task_info)
                         print(f"[Batch] ⟳ {filename}: Deferred (saved to pending list)")
                         r = ToolResult(success=False, error="CUDA OOM - deferred")
+                    elif on_oom == "fail":
+                        failed_count += 1
+                        print(f"[Batch] ✗ {filename}: CUDA OOM (no fallback)")
+                        r = ToolResult(success=False, error="CUDA OOM - no fallback")
                     else:
                         print("[Batch] Attempting CPU fallback...")
 
@@ -618,7 +631,7 @@ def convert_directory(
             if "CUDA OOM" in error_msg or "CUDA out of memory" in error_msg:
                 print(f"[Batch] ✗ {filename}: CUDA OOM")
 
-                if no_cpu_fallback:
+                if on_oom == "defer":
                     deferred_count += 1
                     task_info = {
                         "file": str(f),
@@ -635,6 +648,10 @@ def convert_directory(
                     deferred_tasks.append(task_info)
                     print(f"[Batch] ⟳ {filename}: Deferred (saved to pending list)")
                     r = ToolResult(success=False, error="CUDA OOM - deferred")
+                elif on_oom == "fail":
+                    failed_count += 1
+                    print(f"[Batch] ✗ {filename}: CUDA OOM (no fallback)")
+                    r = ToolResult(success=False, error="CUDA OOM - no fallback")
                 else:
                     print("[Batch] Attempting CPU fallback...")
 
