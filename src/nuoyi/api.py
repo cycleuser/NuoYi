@@ -7,11 +7,14 @@ and agent integration.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 _converter_cache: dict = {}
+_pending_tasks: list[dict] = []
 
 
 @dataclass
@@ -86,6 +89,54 @@ def clear_converter_cache():
 
     _converter_cache.clear()
     print("[Memory] Converter cache cleared")
+
+
+def save_pending_tasks(pending_file: str | Path, tasks: list[dict]) -> None:
+    """Save pending tasks to a JSON file.
+
+    Parameters
+    ----------
+    pending_file : str or Path
+        Path to the pending tasks file.
+    tasks : list[dict]
+        List of pending task dictionaries.
+    """
+    pending_file = Path(pending_file)
+    pending_file.parent.mkdir(parents=True, exist_ok=True)
+
+    data = {
+        "version": "1.0",
+        "created": datetime.now().isoformat(),
+        "tasks": tasks,
+    }
+
+    with pending_file.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    print(f"[Pending] Saved {len(tasks)} tasks to {pending_file}")
+
+
+def load_pending_tasks(pending_file: str | Path) -> list[dict]:
+    """Load pending tasks from a JSON file.
+
+    Parameters
+    ----------
+    pending_file : str or Path
+        Path to the pending tasks file.
+
+    Returns
+    -------
+    list[dict]
+        List of pending task dictionaries.
+    """
+    pending_file = Path(pending_file)
+    if not pending_file.exists():
+        return []
+
+    with pending_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    return data.get("tasks", [])
 
 
 def convert_file(
@@ -212,6 +263,8 @@ def convert_directory(
     low_vram: bool = False,
     existing_files: str = "ask",
     on_progress: callable | None = None,
+    no_cpu_fallback: bool = False,
+    pending_file: str | Path | None = None,
 ) -> ToolResult:
     """Batch-convert all PDF/DOCX files in a directory with optimized memory management.
 
@@ -237,6 +290,10 @@ def convert_directory(
         How to handle existing output files: 'ask', 'overwrite', 'skip', or 'update'.
     on_progress : callable or None
         Progress callback: on_progress(current, total, filename, success)
+    no_cpu_fallback : bool
+        If True, don't fallback to CPU on GPU OOM. Instead, defer tasks.
+    pending_file : str, Path, or None
+        Path to save deferred tasks (used with no_cpu_fallback).
 
     Returns
     -------
@@ -251,6 +308,9 @@ def convert_directory(
         output_dir = input_dir
     else:
         output_dir = Path(output_dir)
+
+    if no_cpu_fallback and pending_file is None:
+        pending_file = output_dir / ".nuoyi_pending.json"
 
     from .utils import create_output_directories, find_documents, get_output_path
 
@@ -304,6 +364,8 @@ def convert_directory(
     success_count = 0
     failed_count = 0
     skipped_count = 0
+    deferred_count = 0
+    deferred_tasks: list[dict] = []
 
     for i, f in enumerate(files, 1):
         out_path = get_output_path(f, input_dir, output_dir, recursive)
@@ -485,45 +547,65 @@ def convert_directory(
                 error_msg = r.error or "Unknown error"
                 if "CUDA OOM" in error_msg or "CUDA out of memory" in error_msg:
                     print(f"[Batch] ✗ {filename}: CUDA OOM")
-                    print("[Batch] Attempting CPU fallback...")
 
-                    try:
-                        import torch
-                        import gc
+                    if no_cpu_fallback:
+                        deferred_count += 1
+                        task_info = {
+                            "file": str(f),
+                            "output": str(out_path),
+                            "filename": filename,
+                            "force_ocr": force_ocr,
+                            "page_range": page_range,
+                            "langs": langs,
+                            "device": device,
+                            "low_vram": low_vram,
+                            "error": "CUDA OOM",
+                            "deferred_at": datetime.now().isoformat(),
+                        }
+                        deferred_tasks.append(task_info)
+                        print(f"[Batch] ⟳ {filename}: Deferred (saved to pending list)")
+                        r = ToolResult(success=False, error="CUDA OOM - deferred")
+                    else:
+                        print("[Batch] Attempting CPU fallback...")
 
-                        clear_converter_cache()
-                        gc.collect()
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                            torch.cuda.synchronize()
-                            print("[Batch] GPU memory cleared")
-                    except Exception:
-                        pass
+                        try:
+                            import gc
 
-                    try:
-                        r_cpu = convert_file(
-                            f,
-                            output_path=out_path,
-                            force_ocr=force_ocr,
-                            page_range=page_range,
-                            langs=langs,
-                            device="cpu",
-                            low_vram=False,
-                            use_cache=False,
-                        )
-                        if r_cpu.success:
-                            success_count += 1
-                            print(f"[Batch] ✓ {filename} (CPU fallback)")
-                            r = r_cpu
-                        else:
+                            import torch
+
+                            clear_converter_cache()
+                            gc.collect()
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                                torch.cuda.synchronize()
+                                print("[Batch] GPU memory cleared")
+                        except Exception:
+                            pass
+
+                        try:
+                            r_cpu = convert_file(
+                                f,
+                                output_path=out_path,
+                                force_ocr=force_ocr,
+                                page_range=page_range,
+                                langs=langs,
+                                device="cpu",
+                                low_vram=False,
+                                use_cache=False,
+                            )
+                            if r_cpu.success:
+                                success_count += 1
+                                print(f"[Batch] ✓ {filename} (CPU fallback)")
+                                r = r_cpu
+                            else:
+                                failed_count += 1
+                                print(f"[Batch] ✗ {filename}: CPU fallback failed - {r_cpu.error}")
+                        except Exception as e_cpu:
                             failed_count += 1
-                            print(f"[Batch] ✗ {filename}: CPU fallback failed - {r_cpu.error}")
-                    except Exception as e_cpu:
-                        failed_count += 1
-                        print(f"[Batch] ✗ {filename}: CPU fallback failed - {e_cpu}")
-                        r = ToolResult(
-                            success=False, error=f"CUDA OOM, CPU fallback failed: {e_cpu}"
-                        )
+                            print(f"[Batch] ✗ {filename}: CPU fallback failed - {e_cpu}")
+                            r = ToolResult(
+                                success=False, error=f"CUDA OOM, CPU fallback failed: {e_cpu}"
+                            )
                 else:
                     failed_count += 1
                     print(f"[Batch] ✗ {filename}: {error_msg}")
@@ -535,42 +617,64 @@ def convert_directory(
             error_msg = str(e)
             if "CUDA OOM" in error_msg or "CUDA out of memory" in error_msg:
                 print(f"[Batch] ✗ {filename}: CUDA OOM")
-                print("[Batch] Attempting CPU fallback...")
 
-                try:
-                    import torch
-                    import gc
+                if no_cpu_fallback:
+                    deferred_count += 1
+                    task_info = {
+                        "file": str(f),
+                        "output": str(out_path),
+                        "filename": filename,
+                        "force_ocr": force_ocr,
+                        "page_range": page_range,
+                        "langs": langs,
+                        "device": device,
+                        "low_vram": low_vram,
+                        "error": "CUDA OOM",
+                        "deferred_at": datetime.now().isoformat(),
+                    }
+                    deferred_tasks.append(task_info)
+                    print(f"[Batch] ⟳ {filename}: Deferred (saved to pending list)")
+                    r = ToolResult(success=False, error="CUDA OOM - deferred")
+                else:
+                    print("[Batch] Attempting CPU fallback...")
 
-                    clear_converter_cache()
-                    gc.collect()
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                        torch.cuda.synchronize()
-                        print("[Batch] GPU memory cleared")
-                except Exception:
-                    pass
+                    try:
+                        import gc
 
-                try:
-                    r = convert_file(
-                        f,
-                        output_path=out_path,
-                        force_ocr=force_ocr,
-                        page_range=page_range,
-                        langs=langs,
-                        device="cpu",
-                        low_vram=False,
-                        use_cache=False,
-                    )
-                    if r.success:
-                        success_count += 1
-                        print(f"[Batch] ✓ {filename} (CPU fallback)")
-                    else:
+                        import torch
+
+                        clear_converter_cache()
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
+                            print("[Batch] GPU memory cleared")
+                    except Exception:
+                        pass
+
+                    try:
+                        r = convert_file(
+                            f,
+                            output_path=out_path,
+                            force_ocr=force_ocr,
+                            page_range=page_range,
+                            langs=langs,
+                            device="cpu",
+                            low_vram=False,
+                            use_cache=False,
+                        )
+                        if r.success:
+                            success_count += 1
+                            print(f"[Batch] ✓ {filename} (CPU fallback)")
+                        else:
+                            failed_count += 1
+                            print(f"[Batch] ✗ {filename}: CPU fallback failed - {r.error}")
+                    except Exception as e_cpu:
                         failed_count += 1
-                        print(f"[Batch] ✗ {filename}: CPU fallback failed - {r.error}")
-                except Exception as e_cpu:
-                    failed_count += 1
-                    r = ToolResult(success=False, error=f"CUDA OOM, CPU fallback failed: {e_cpu}")
-                    print(f"[Batch] ✗ {filename}: CPU fallback failed - {e_cpu}")
+                        r = ToolResult(
+                            success=False, error=f"CUDA OOM, CPU fallback failed: {e_cpu}"
+                        )
+                        print(f"[Batch] ✗ {filename}: CPU fallback failed - {e_cpu}")
             else:
                 failed_count += 1
                 r = ToolResult(success=False, error=error_msg)
@@ -610,10 +714,13 @@ def convert_directory(
 
     clear_converter_cache()
 
+    if deferred_tasks and pending_file:
+        save_pending_tasks(pending_file, deferred_tasks)
+
     from . import __version__
 
     print(
-        f"[Batch] Done: {success_count} converted, {skipped_count} skipped, {failed_count} failed"
+        f"[Batch] Done: {success_count} converted, {skipped_count} skipped, {deferred_count} deferred, {failed_count} failed"
     )
 
     return ToolResult(
@@ -622,7 +729,9 @@ def convert_directory(
             "files": results,
             "success": success_count,
             "skipped": skipped_count,
+            "deferred": deferred_count,
             "failed": failed_count,
+            "deferred_tasks": deferred_tasks,
         },
         metadata={
             "input_dir": str(input_dir.resolve()),

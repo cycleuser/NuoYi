@@ -106,6 +106,8 @@ def convert_directory(
     engine: str = "auto",
     recursive: bool = False,
     existing_files: str = "ask",
+    no_cpu_fallback: bool = False,
+    pending_file: str | None = None,
 ):
     """Batch convert all PDF/DOCX files in a directory with optimized memory."""
 
@@ -122,6 +124,8 @@ def convert_directory(
         low_vram=low_vram,
         recursive=recursive,
         existing_files=existing_files,
+        no_cpu_fallback=no_cpu_fallback,
+        pending_file=pending_file,
     )
 
     if not result.success:
@@ -180,6 +184,9 @@ Examples:
   nuoyi ./papers --batch --existing-files skip      # Skip existing
   nuoyi ./papers --batch --existing-files update    # Only newer files
   nuoyi ./papers --batch --existing-files ask       # Interactive prompt
+  nuoyi ./papers --batch --no-cpu-fallback          # Defer on GPU OOM
+  nuoyi ./papers --batch --no-cpu-fallback --pending-file deferred.json
+  nuoyi --resume-pending deferred.json              # Resume deferred tasks
   nuoyi --gui                            # Launch GUI
   nuoyi --web                            # Launch Web Interface
   nuoyi --web --port 8080                # Web on port 8080
@@ -261,6 +268,21 @@ Low VRAM Tips (4-6GB):
         default="ask",
         help="How to handle existing output files: ask (interactive), overwrite, skip, or update (only if source is newer)",
     )
+    parser.add_argument(
+        "--no-cpu-fallback",
+        action="store_true",
+        help="Don't fallback to CPU on GPU OOM. Instead, defer tasks to pending file.",
+    )
+    parser.add_argument(
+        "--pending-file",
+        default=None,
+        help="Path to save deferred tasks (default: .nuoyi_pending.json in output directory)",
+    )
+    parser.add_argument(
+        "--resume-pending",
+        metavar="FILE",
+        help="Resume deferred tasks from a pending file",
+    )
     parser.add_argument("--gui", action="store_true", help="Launch GUI")
     parser.add_argument("--web", action="store_true", help="Launch Web Interface")
     parser.add_argument("--host", default="0.0.0.0", help="Web server host (default: 0.0.0.0)")
@@ -268,6 +290,63 @@ Low VRAM Tips (4-6GB):
     parser.add_argument("-V", "--version", action="version", version=f"NuoYi {__version__}")
 
     args = parser.parse_args()
+
+    if args.resume_pending:
+        from .api import convert_file, load_pending_tasks, save_pending_tasks
+
+        pending_file = Path(args.resume_pending)
+        if not pending_file.exists():
+            print(f"Error: Pending file not found: {pending_file}")
+            sys.exit(1)
+
+        tasks = load_pending_tasks(pending_file)
+        if not tasks:
+            print("[Resume] No pending tasks found.")
+            sys.exit(0)
+
+        print(f"[Resume] Loading {len(tasks)} pending tasks from {pending_file}")
+
+        success_count = 0
+        failed_count = 0
+        still_pending = []
+
+        for i, task in enumerate(tasks, 1):
+            filename = task.get("filename", task.get("file", "unknown"))
+            print(f"[Resume] {i}/{len(tasks)}: {filename}")
+
+            try:
+                r = convert_file(
+                    task["file"],
+                    output_path=task.get("output"),
+                    force_ocr=task.get("force_ocr", False),
+                    page_range=task.get("page_range"),
+                    langs=task.get("langs", "zh,en"),
+                    device=task.get("device", "auto"),
+                    low_vram=task.get("low_vram", False),
+                    use_cache=False,
+                )
+
+                if r.success:
+                    success_count += 1
+                    print(f"[Resume] ✓ {filename}")
+                else:
+                    failed_count += 1
+                    still_pending.append(task)
+                    print(f"[Resume] ✗ {filename}: {r.error}")
+            except Exception as e:
+                failed_count += 1
+                still_pending.append(task)
+                print(f"[Resume] ✗ {filename}: {e}")
+
+        if still_pending:
+            save_pending_tasks(pending_file, still_pending)
+            print(f"[Resume] {len(still_pending)} tasks still pending")
+        else:
+            pending_file.unlink(missing_ok=True)
+            print(f"[Resume] All tasks completed. Removed {pending_file}")
+
+        print(f"[Resume] Done: {success_count} succeeded, {failed_count} failed")
+        sys.exit(0)
 
     if args.list_langs:
         print("Supported languages:")
@@ -480,6 +559,8 @@ Low VRAM Tips (4-6GB):
             engine,
             args.recursive,
             args.existing_files,
+            args.no_cpu_fallback,
+            args.pending_file,
         )
 
     else:

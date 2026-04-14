@@ -70,7 +70,13 @@ __license__ = "GPL-3.0"
 from .api import (
     ToolResult,
     clear_converter_cache,
+    load_pending_tasks,
+    save_pending_tasks,
+)
+from .api import (
     convert_directory as api_convert_directory,
+)
+from .api import (
     convert_file as api_convert_file,
 )
 from .converter import (
@@ -85,13 +91,12 @@ from .utils import (
     SUPPORTED_DEVICES,
     SUPPORTED_LANGUAGES,
     clean_markdown,
+    clear_all_gpu_memory,
     clear_directml_memory,
     clear_gpu_memory,
     clear_mlx_memory,
-    clear_all_gpu_memory,
     enable_low_vram_mode,
     enable_very_low_vram_mode,
-    optimize_for_cpu_inference,
     get_device_info,
     get_directml_device_count,
     get_directml_device_name,
@@ -107,9 +112,10 @@ from .utils import (
     is_mps_available,
     is_openvino_available,
     is_rocm_available,
-    is_vulkan_available,
     is_torch_vulkan_available,
+    is_vulkan_available,
     list_available_devices,
+    optimize_for_cpu_inference,
     print_device_info,
     save_images_and_update_markdown,
     select_device,
@@ -128,6 +134,8 @@ __all__ = [
     "api_convert_file",
     "api_convert_directory",
     "clear_converter_cache",
+    "load_pending_tasks",
+    "save_pending_tasks",
     "SUPPORTED_DEVICES",
     "SUPPORTED_LANGUAGES",
     "DEFAULT_LANGS",
