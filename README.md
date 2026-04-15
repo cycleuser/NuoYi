@@ -73,6 +73,65 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install nuoyi
 ```
 
+### AMD ROCm GPU Setup (Linux)
+
+NuoYi supports AMD Radeon GPUs (RX 5000/6000/7000 series) on Linux via ROCm.
+
+**Supported GPUs:**
+- RX 7900 XTX/XT, RX 7800/7700/7600 (RDNA 3)
+- RX 6900/6800/6700/6600 (RDNA 2)
+- RX 5700/5600/5500 (RDNA)
+- ⚠️ RX 580/590 (Polaris) are NOT supported by ROCm
+
+**Step 1: Create a dedicated conda environment**
+
+```bash
+conda create -n rocm python=3.12 -y
+conda activate rocm
+```
+
+**Step 2: Install ROCm PyTorch**
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
+```
+
+Verify: `python -c "import torch; print(torch.version.hip)"` should output `6.2.xxxxx`
+
+**Step 3: Install NuoYi (without touching torch)**
+
+⚠️ **IMPORTANT:** Do NOT use `pip install -e ".[dev]"` as it will replace ROCm torch with CUDA version.
+
+```bash
+# Install NuoYi without dependencies
+pip install --no-deps -e .
+
+# Install marker-pdf without dependencies
+pip install --no-deps marker-pdf
+
+# Install remaining dependencies (no-deps to avoid torch replacement)
+pip install pydantic python-docx PyMuPDF Pillow flask pytest ruff \
+    python-dotenv rapidfuzz "regex>=2024.4.28,<2025.0.0" \
+    "scikit-learn>=1.6.1,<2.0.0" tqdm "transformers>=4.45.2,<5.0.0" \
+    "Pillow>=10.1.0,<11.0.0" google-genai markdown2 markdownify \
+    "openai>=1.65.2,<2.0.0" pdftext pre-commit pydantic-settings \
+    surya-ocr "opencv-python-headless==4.11.0.86" --no-deps
+```
+
+**Step 4: Run with ROCm**
+
+```bash
+# Single file
+nuoyi input.pdf --device rocm -o output.md
+
+# Batch conversion
+nuoyi ./papers --batch --device rocm --output ./output
+```
+
+NuoYi automatically configures ROCm environment variables (`HSA_ENABLE_SDMA=0`, `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`, and auto-detected `HSA_OVERRIDE_GFX_VERSION`).
+
+For detailed troubleshooting, see [AMD_ROCM_SETUP.md](AMD_ROCM_SETUP.md).
+
 ## Usage
 
 ### Command Line Interface

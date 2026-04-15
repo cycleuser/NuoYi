@@ -49,15 +49,22 @@ from .utils import (
     enable_low_vram_mode,
     get_gpu_memory_info,
     get_rocm_memory_info,
+    is_amd_gpu_available,
+    is_directml_available,
     is_rocm_available,
     select_device,
     setup_memory_optimization,
+    _setup_rocm_env,
 )
 
 if TYPE_CHECKING:
     pass
 
 setup_memory_optimization()
+
+# Set up ROCm environment BEFORE importing torch-dependent marker modules
+if is_rocm_available():
+    _setup_rocm_env()
 
 import fitz  # noqa: E402
 

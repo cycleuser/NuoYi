@@ -1085,10 +1085,56 @@ def _setup_rocm_env():
     """Set up environment variables for ROCm."""
     os.environ["HSA_ENABLE_SDMA"] = "0"
 
+    # Enable experimental features for RDNA GPUs (Navi 31/32/33 etc.)
+    os.environ.setdefault("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")
+
     if "HSA_OVERRIDE_GFX_VERSION" not in os.environ:
-        os.environ["HSA_OVERRIDE_GFX_VERSION"] = "10.3.0"
+        # Auto-detect GPU architecture for common AMD GPUs
+        gfx_version = _detect_rocm_gfx_version()
+        if gfx_version:
+            os.environ["HSA_OVERRIDE_GFX_VERSION"] = gfx_version
+            print(f"[Device] ROCm GFX version set to: {gfx_version}")
 
     os.environ["ROCM_PATH"] = os.environ.get("ROCM_PATH", "/opt/rocm")
+
+
+def _detect_rocm_gfx_version() -> str | None:
+    """Auto-detect ROCm GPU architecture and return GFX version string.
+
+    Returns GFX version like "11.0.0" for RDNA3, "10.3.0" for RDNA2, etc.
+    """
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return None
+
+        props = torch.cuda.get_device_properties(0)
+        device_name = torch.cuda.get_device_name(0).lower()
+
+        # RDNA3 (RX 7000 series) - gfx1100
+        if any(x in device_name for x in ["7900", "7800", "7700", "7600", "w7900", "w7800"]):
+            return "11.0.0"
+
+        # RDNA2 (RX 6000 series) - gfx1030
+        if any(
+            x in device_name
+            for x in ["6900", "6800", "6700", "6600", "6500", "6400", "w6900", "w6800"]
+        ):
+            return "10.3.0"
+
+        # RDNA (RX 5000 series) - gfx1010
+        if any(x in device_name for x in ["5700", "5600", "5500", "w5700"]):
+            return "10.1.0"
+
+        # Use major.minor from device properties as fallback
+        if hasattr(props, "major") and hasattr(props, "minor"):
+            return f"{props.major}.{props.minor}.0"
+
+        return None
+
+    except Exception:
+        return None
 
 
 def _setup_directml_env():

@@ -73,6 +73,65 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 pip install nuoyi
 ```
 
+### AMD ROCm GPU 安装指南（Linux）
+
+NuoYi 支持 Linux 下通过 ROCm 使用 AMD Radeon 显卡（RX 5000/6000/7000 系列）。
+
+**支持的显卡：**
+- RX 7900 XTX/XT、RX 7800/7700/7600（RDNA 3）
+- RX 6900/6800/6700/6600（RDNA 2）
+- RX 5700/5600/5500（RDNA）
+- ⚠️ RX 580/590（Polaris）**不**支持 ROCm
+
+**第一步：创建独立的 conda 环境**
+
+```bash
+conda create -n rocm python=3.12 -y
+conda activate rocm
+```
+
+**第二步：安装 ROCm 版 PyTorch**
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
+```
+
+验证：`python -c "import torch; print(torch.version.hip)"` 应输出 `6.2.xxxxx`
+
+**第三步：安装 NuoYi（不触碰 torch）**
+
+⚠️ **重要：** 不要使用 `pip install -e ".[dev]"`，这会将 ROCm torch 替换为 CUDA 版本。
+
+```bash
+# 安装 NuoYi（不带依赖）
+pip install --no-deps -e .
+
+# 安装 marker-pdf（不带依赖）
+pip install --no-deps marker-pdf
+
+# 安装其余依赖（使用 --no-deps 避免替换 torch）
+pip install pydantic python-docx PyMuPDF Pillow flask pytest ruff \
+    python-dotenv rapidfuzz "regex>=2024.4.28,<2025.0.0" \
+    "scikit-learn>=1.6.1,<2.0.0" tqdm "transformers>=4.45.2,<5.0.0" \
+    "Pillow>=10.1.0,<11.0.0" google-genai markdown2 markdownify \
+    "openai>=1.65.2,<2.0.0" pdftext pre-commit pydantic-settings \
+    surya-ocr "opencv-python-headless==4.11.0.86" --no-deps
+```
+
+**第四步：使用 ROCm 运行**
+
+```bash
+# 转换单个文件
+nuoyi input.pdf --device rocm -o output.md
+
+# 批量转换
+nuoyi ./papers --batch --device rocm --output ./output
+```
+
+NuoYi 会自动配置 ROCm 环境变量（`HSA_ENABLE_SDMA=0`、`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`，以及自动检测的 `HSA_OVERRIDE_GFX_VERSION`）。
+
+详细的故障排除指南请参阅 [AMD_ROCM_SETUP.md](AMD_ROCM_SETUP.md)。
+
 ## 使用方法
 
 ### 命令行界面
