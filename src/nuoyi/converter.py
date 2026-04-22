@@ -1082,14 +1082,14 @@ class Doc2xConverter:
             data = {"formula": self.formula}
 
             response = requests.post(
-                f"{self.API_BASE}/pdf/parse",
+                f"{self.API_BASE}/parse/pdf",
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 files=files,
                 data=data,
             )
 
         if response.status_code != 200:
-            raise RuntimeError(f"Doc2x API error: {response.text}")
+            raise RuntimeError(f"Doc2x API error (HTTP {response.status_code}): {response.text}")
 
         result = response.json()
         if result.get("code") != "success":
@@ -1107,7 +1107,7 @@ class Doc2xConverter:
             time.sleep(self.POLL_INTERVAL)
 
             response = requests.get(
-                f"{self.API_BASE}/async/status",
+                f"{self.API_BASE}/parse/status",
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 params={"uid": uid},
             )
@@ -1117,51 +1117,44 @@ class Doc2xConverter:
 
             status = response.json()
             if status.get("code") != "success":
+                if status.get("code") == "parse_status_not_found":
+                    continue
                 raise RuntimeError(f"Doc2x poll failed: {status.get('msg', 'Unknown error')}")
 
-            data = status.get("data", [])
-            if not data:
-                continue
-
-            task = data[0] if isinstance(data, list) else data
-            task_status = task.get("status", "")
+            data = status.get("data", {})
+            task_status = data.get("status", "")
 
             if task_status == "success":
-                return task
+                return data
             if task_status in ("fail", "failed", "error"):
-                raise RuntimeError(f"Doc2x processing failed: {task.get('fail_reason', 'Unknown')}")
+                raise RuntimeError(f"Doc2x processing failed: {data.get('fail_reason', 'Unknown')}")
 
         raise RuntimeError(f"Doc2x timeout ({self.POLL_TIMEOUT}s)")
 
-    def _download_result(self, uid: str) -> tuple[str, dict]:
-        """Download markdown result and images."""
-        import requests
+    def _download_result(self, result_data: dict) -> tuple[str, dict]:
+        """Extract markdown and images from result data."""
+        pages = result_data.get("result", {}).get("pages", [])
 
-        response = requests.get(
-            f"{self.API_BASE}/async/download",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            params={"uid": uid, "result_type": "md"},
-        )
-
-        if response.status_code != 200:
-            raise RuntimeError(f"Doc2x download error: {response.text}")
-
-        md_text = response.text
-
+        md_parts = []
         images = {}
-        try:
-            img_response = requests.get(
-                f"{self.API_BASE}/async/download",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                params={"uid": uid, "result_type": "image"},
-            )
-            if img_response.status_code == 200:
-                for img_name in ["image.png"]:
-                    images[img_name] = img_response.content
-        except Exception:
-            pass
 
-        return md_text, images
+        for page in pages:
+            md_text = page.get("md", "")
+            if md_text:
+                md_parts.append(md_text)
+
+            # Extract images from page data
+            page_images = page.get("images", {})
+            for img_name, img_url in page_images.items():
+                try:
+                    import requests as req
+                    img_resp = req.get(img_url, timeout=10)
+                    if img_resp.status_code == 200:
+                        images[img_name] = img_resp.content
+                except Exception:
+                    pass
+
+        return "\n\n".join(md_parts), images
 
     def convert_file(self, pdf_path: str) -> tuple[str, dict]:
         """Convert PDF to Markdown via Doc2x API."""
@@ -1169,8 +1162,8 @@ class Doc2xConverter:
         if not uid:
             raise RuntimeError("No UID returned from Doc2x")
 
-        self._poll_result(uid)
-        return self._download_result(uid)
+        result_data = self._poll_result(uid)
+        return self._download_result(result_data)
 
     @staticmethod
     def is_available() -> bool:
