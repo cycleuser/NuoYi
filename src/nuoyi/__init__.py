@@ -80,8 +80,10 @@ from .api import (
     convert_file as api_convert_file,
 )
 from .converter import (
+    Doc2xConverter,
     DocxConverter,
     MarkerPDFConverter,
+    MinerUCloudConverter,
     get_converter,
     list_available_engines,
 )
@@ -128,6 +130,8 @@ __all__ = [
     "__license__",
     "MarkerPDFConverter",
     "DocxConverter",
+    "MinerUCloudConverter",
+    "Doc2xConverter",
     "get_converter",
     "list_available_engines",
     "ToolResult",

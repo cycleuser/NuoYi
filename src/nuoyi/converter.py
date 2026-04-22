@@ -37,6 +37,7 @@ Memory Optimization for Low VRAM (4-6GB):
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from docx import Document
@@ -82,6 +83,8 @@ SUPPORTED_ENGINES = [
     "pdfplumber",
     "llamaparse",
     "mathpix",
+    "mineru-cloud",
+    "doc2x",
 ]
 
 ENGINE_INFO = {
@@ -139,6 +142,22 @@ ENGINE_INFO = {
         "models": "cloud",
         "ocr": True,
         "notes": "Math specialist",
+        "amd_support": True,
+    },
+    "mineru-cloud": {
+        "type": "cloud",
+        "gpu": "N/A",
+        "models": "cloud",
+        "ocr": True,
+        "notes": "MinerU online, excellent for Chinese",
+        "amd_support": True,
+    },
+    "doc2x": {
+        "type": "cloud",
+        "gpu": "N/A",
+        "models": "cloud",
+        "ocr": True,
+        "notes": "Best for formulas, supports split",
         "amd_support": True,
     },
 }
@@ -784,6 +803,380 @@ class MathpixConverter:
         return bool(os.environ.get("MATHPIX_APP_ID") and os.environ.get("MATHPIX_APP_KEY"))
 
 
+def split_pdf(pdf_path: str, max_pages: int = 50, output_dir: str | None = None) -> list[str]:
+    """Split a PDF into multiple smaller PDFs for cloud processing.
+
+    Cloud platforms often have page limits (e.g., 50 pages per request).
+    This function splits large PDFs into chunks that can be processed
+    individually and then aggregated.
+
+    Parameters
+    ----------
+    pdf_path : str
+        Path to the input PDF file.
+    max_pages : int
+        Maximum pages per chunk (default: 50).
+    output_dir : str or None
+        Directory for split files. Defaults to same directory as input.
+
+    Returns
+    -------
+    list[str]
+        List of paths to split PDF files.
+    """
+    import tempfile
+
+    doc = fitz.open(pdf_path)
+    total_pages = len(doc)
+
+    if total_pages <= max_pages:
+        doc.close()
+        return [pdf_path]
+
+    if output_dir is None:
+        output_dir = tempfile.mkdtemp(prefix="nuoyi_split_")
+
+    base_name = Path(pdf_path).stem
+    split_files = []
+
+    for i in range(0, total_pages, max_pages):
+        end = min(i + max_pages, total_pages)
+        chunk_doc = fitz.open()
+        chunk_doc.insert_pdf(doc, from_page=i, to_page=end - 1)
+
+        chunk_path = os.path.join(output_dir, f"{base_name}_p{i+1}-{end}.pdf")
+        chunk_doc.save(chunk_path)
+        chunk_doc.close()
+        split_files.append(chunk_path)
+
+        print(f"[Split] Created chunk {len(split_files)}: pages {i+1}-{end}")
+
+    doc.close()
+    print(f"[Split] Split {total_pages} pages into {len(split_files)} chunks (max {max_pages}/chunk)")
+    return split_files
+
+
+def aggregate_markdown(
+    results: list[tuple[str, dict]],
+    page_markers: bool = True,
+) -> tuple[str, dict]:
+    """Aggregate markdown and images from multiple PDF chunks.
+
+    When a PDF is split into chunks, each chunk produces its own markdown
+    and images. This function merges them together:
+    - Joins markdown with page break markers
+    - Renumbers images to avoid filename conflicts
+    - Preserves image references in markdown
+
+    Parameters
+    ----------
+    results : list[tuple[str, dict]]
+        List of (markdown, images_dict) from each chunk.
+    page_markers : bool
+        Insert page break markers between chunks (default: True).
+
+    Returns
+    -------
+    tuple[str, dict]
+        Aggregated (markdown, images_dict).
+    """
+    all_md_parts = []
+    all_images = {}
+    image_counter = 0
+
+    for chunk_idx, (md_text, images) in enumerate(results):
+        if page_markers and chunk_idx > 0:
+            all_md_parts.append(f"\n---\n\n<!-- Page break (chunk {chunk_idx + 1}) -->\n\n")
+
+        if images:
+            new_images = {}
+            for img_name, img_data in images.items():
+                image_counter += 1
+                ext = Path(img_name).suffix or ".png"
+                new_name = f"image_{image_counter:04d}{ext}"
+
+                new_images[new_name] = img_data
+
+                old_ref = f"]({img_name})"
+                new_ref = f"]({new_name})"
+                md_text = md_text.replace(old_ref, new_ref)
+
+                old_ref = f"](./{img_name})"
+                md_text = md_text.replace(old_ref, new_ref)
+
+            all_images.update(new_images)
+
+        all_md_parts.append(md_text)
+
+    return clean_markdown("\n\n".join(all_md_parts)), all_images
+
+
+class MinerUCloudConverter:
+    """MinerU Cloud - online PDF to Markdown service.
+
+    Type: Cloud (API key required)
+    OCR: Yes (excellent for Chinese)
+    Quality: Excellent, especially for Chinese documents
+    Cost: Free tier + paid plans
+
+    Setup:
+        export MINERU_API_KEY=your_key
+    Install: pip install requests
+    Get API key: https://mineru.net/
+
+    Features:
+    - Excellent Chinese document support
+    - Good table and formula recognition
+    - Automatic image extraction
+    - Supports PDF, images, and other formats
+    """
+
+    API_BASE = "https://mineru.net/api/v1"
+    POLL_INTERVAL = 3
+    POLL_TIMEOUT = 300
+
+    def __init__(self, api_key: str | None = None, lang: str = "ch"):
+        self.api_key = api_key or os.environ.get("MINERU_API_KEY")
+        self.lang = lang
+
+        if not self.api_key:
+            raise ValueError(
+                "MinerU Cloud requires API key. Set MINERU_API_KEY env var or pass api_key param.\n"
+                "Get API key: https://mineru.net/"
+            )
+
+    def _upload_pdf(self, pdf_path: str) -> str | None:
+        """Upload PDF and return task_id."""
+        import base64
+
+        import requests
+
+        with open(pdf_path, "rb") as f:
+            pdf_data = f.read()
+
+        response = requests.post(
+            f"{self.API_BASE}/extract",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "pdf_base64": base64.b64encode(pdf_data).decode(),
+                "lang": self.lang,
+                "output_format": "markdown",
+            },
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(f"MinerU Cloud API error: {response.text}")
+
+        result = response.json()
+        return result.get("task_id") or result.get("id")
+
+    def _poll_result(self, task_id: str) -> dict:
+        """Poll for task completion and return result."""
+        import time
+
+        import requests
+
+        for _ in range(self.POLL_TIMEOUT // self.POLL_INTERVAL):
+            time.sleep(self.POLL_INTERVAL)
+
+            response = requests.get(
+                f"{self.API_BASE}/extract/{task_id}",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+            )
+
+            if response.status_code != 200:
+                raise RuntimeError(f"MinerU Cloud status error: {response.text}")
+
+            status = response.json()
+            state = status.get("state", "").lower()
+
+            if state in ("completed", "success", "done"):
+                return status
+            if state in ("failed", "error"):
+                raise RuntimeError(f"MinerU Cloud processing failed: {status}")
+
+        raise RuntimeError(f"MinerU Cloud timeout ({self.POLL_TIMEOUT}s)")
+
+    def convert_file(self, pdf_path: str) -> tuple[str, dict]:
+        """Convert PDF to Markdown via MinerU Cloud API."""
+        import requests
+
+        task_id = self._upload_pdf(pdf_path)
+        if not task_id:
+            raise RuntimeError("No task_id returned from MinerU Cloud")
+
+        result = self._poll_result(task_id)
+
+        md_text = ""
+        images = {}
+
+        if "markdown" in result:
+            md_text = result["markdown"]
+        elif "result" in result:
+            md_text = result["result"].get("markdown", "")
+            images = result["result"].get("images", {})
+        elif "data" in result:
+            md_text = result["data"].get("markdown", "")
+            images = result["data"].get("images", {})
+
+        if not md_text:
+            download_url = result.get("download_url") or result.get("result_url")
+            if download_url:
+                resp = requests.get(
+                    download_url,
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                )
+                if resp.status_code == 200:
+                    md_text = resp.text
+
+        return clean_markdown(md_text), images or {}
+
+    @staticmethod
+    def is_available() -> bool:
+        return bool(os.environ.get("MINERU_API_KEY"))
+
+
+class Doc2xConverter:
+    """Doc2x - cloud PDF to Markdown with excellent formula support.
+
+    Type: Cloud (API key required)
+    OCR: Yes
+    Quality: Excellent for STEM documents with formulas
+    Cost: Free tier + paid plans
+
+    Setup:
+        export DOC2X_API_KEY=your_key
+    Install: pip install requests
+    Get API key: https://doc2x.noedgeai.com/
+
+    Features:
+    - Best-in-class formula recognition (LaTeX)
+    - Good table support
+    - Image extraction
+    - Supports PDF, DOCX, PPTX, images
+    """
+
+    API_BASE = "https://v2.doc2x.noedgeai.com/api/v2"
+    POLL_INTERVAL = 2
+    POLL_TIMEOUT = 300
+
+    def __init__(self, api_key: str | None = None, formula: str = "latex"):
+        self.api_key = api_key or os.environ.get("DOC2X_API_KEY")
+        self.formula = formula
+
+        if not self.api_key:
+            raise ValueError(
+                "Doc2x requires API key. Set DOC2X_API_KEY env var or pass api_key param.\n"
+                "Get API key: https://doc2x.noedgeai.com/"
+            )
+
+    def _upload_and_parse(self, pdf_path: str) -> str | None:
+        """Upload PDF and return task/record ID."""
+        import requests
+
+        with open(pdf_path, "rb") as f:
+            files = {"file": (Path(pdf_path).name, f, "application/pdf")}
+            data = {"formula": self.formula}
+
+            response = requests.post(
+                f"{self.API_BASE}/pdf/parse",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                files=files,
+                data=data,
+            )
+
+        if response.status_code != 200:
+            raise RuntimeError(f"Doc2x API error: {response.text}")
+
+        result = response.json()
+        if result.get("code") != "success":
+            raise RuntimeError(f"Doc2x upload failed: {result.get('msg', 'Unknown error')}")
+
+        return result.get("data", {}).get("uid")
+
+    def _poll_result(self, uid: str) -> dict:
+        """Poll for task completion."""
+        import time
+
+        import requests
+
+        for _ in range(self.POLL_TIMEOUT // self.POLL_INTERVAL):
+            time.sleep(self.POLL_INTERVAL)
+
+            response = requests.get(
+                f"{self.API_BASE}/async/status",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                params={"uid": uid},
+            )
+
+            if response.status_code != 200:
+                raise RuntimeError(f"Doc2x status error: {response.text}")
+
+            status = response.json()
+            if status.get("code") != "success":
+                raise RuntimeError(f"Doc2x poll failed: {status.get('msg', 'Unknown error')}")
+
+            data = status.get("data", [])
+            if not data:
+                continue
+
+            task = data[0] if isinstance(data, list) else data
+            task_status = task.get("status", "")
+
+            if task_status == "success":
+                return task
+            if task_status in ("fail", "failed", "error"):
+                raise RuntimeError(f"Doc2x processing failed: {task.get('fail_reason', 'Unknown')}")
+
+        raise RuntimeError(f"Doc2x timeout ({self.POLL_TIMEOUT}s)")
+
+    def _download_result(self, uid: str) -> tuple[str, dict]:
+        """Download markdown result and images."""
+        import requests
+
+        response = requests.get(
+            f"{self.API_BASE}/async/download",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            params={"uid": uid, "result_type": "md"},
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(f"Doc2x download error: {response.text}")
+
+        md_text = response.text
+
+        images = {}
+        try:
+            img_response = requests.get(
+                f"{self.API_BASE}/async/download",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                params={"uid": uid, "result_type": "image"},
+            )
+            if img_response.status_code == 200:
+                for img_name in ["image.png"]:
+                    images[img_name] = img_response.content
+        except Exception:
+            pass
+
+        return md_text, images
+
+    def convert_file(self, pdf_path: str) -> tuple[str, dict]:
+        """Convert PDF to Markdown via Doc2x API."""
+        uid = self._upload_and_parse(pdf_path)
+        if not uid:
+            raise RuntimeError("No UID returned from Doc2x")
+
+        self._poll_result(uid)
+        return self._download_result(uid)
+
+    @staticmethod
+    def is_available() -> bool:
+        return bool(os.environ.get("DOC2X_API_KEY"))
+
+
 def select_engine(engine: str = "auto", has_gpu: bool = True) -> str:
     """Auto-select best available engine."""
     if engine != "auto":
@@ -825,11 +1218,12 @@ def get_converter(
     api_key: str | None = None,
     app_id: str | None = None,
     app_key: str | None = None,
+    max_pages: int = 50,
 ):
     """Get PDF converter by engine name.
 
     Args:
-        engine: Engine name (auto, marker, docling, pymupdf, pdfplumber, llamaparse, mathpix)
+        engine: Engine name (auto, marker, docling, pymupdf, pdfplumber, llamaparse, mathpix, mineru-cloud, doc2x)
         force_ocr: Force OCR (marker only)
         page_range: Page range (marker only)
         langs: Languages for OCR
@@ -842,9 +1236,10 @@ def get_converter(
             - mlx: Apple MLX
             - cpu: CPU only
         low_vram: Low VRAM mode (<6GB)
-        api_key: API key for LlamaParse
+        api_key: API key for LlamaParse/MinerU Cloud/Doc2x
         app_id: App ID for Mathpix
         app_key: App key for Mathpix
+        max_pages: Max pages per chunk for cloud converters (default: 50)
     """
     has_gpu = device != "cpu" and (
         _is_gpu_device(device) or _is_mlx_device(device) or device == "auto"
@@ -919,6 +1314,26 @@ def get_converter(
                 low_vram=low_vram,
             )
 
+    if selected == "mineru-cloud":
+        if MinerUCloudConverter.is_available() or api_key:
+            print("[Converter] Using MinerU Cloud (online, excellent for Chinese)")
+            return MinerUCloudConverter(api_key=api_key)
+        raise ValueError(
+            "MinerU Cloud requires API key.\n"
+            "Set: export MINERU_API_KEY=your_key\n"
+            "Get key: https://mineru.net/"
+        )
+
+    if selected == "doc2x":
+        if Doc2xConverter.is_available() or api_key:
+            print("[Converter] Using Doc2x (online, best for formulas)")
+            return Doc2xConverter(api_key=api_key)
+        raise ValueError(
+            "Doc2x requires API key.\n"
+            "Set: export DOC2X_API_KEY=your_key\n"
+            "Get key: https://doc2x.noedgeai.com/"
+        )
+
     raise ImportError(
         "No PDF converter available. Install one of:\n"
         "  pip install marker-pdf         # Best quality, GPU\n"
@@ -927,7 +1342,10 @@ def get_converter(
         "  pip install pymupdf4llm        # Fastest, no GPU\n"
         "  pip install pdfplumber         # Lightweight\n"
         "  pip install llama-parse        # Cloud, API key\n"
-        "  pip install requests           # For Mathpix cloud\n"
+        "  pip install requests           # For Mathpix/MinerU Cloud/Doc2x\n"
+        "\nCloud engines (API key required):\n"
+        "  export MINERU_API_KEY=xxx      # MinerU Cloud: https://mineru.net/\n"
+        "  export DOC2X_API_KEY=xxx       # Doc2x: https://doc2x.noedgeai.com/\n"
         "\nFor AMD GPUs:\n"
         "  Windows: pip install torch-directml  # DirectML support\n"
         "  Linux: Use ROCm PyTorch build        # ROCm support\n"
@@ -954,6 +1372,10 @@ def list_available_engines() -> dict[str, dict]:
             available = LlamaParseConverter.is_available()
         elif name == "mathpix":
             available = MathpixConverter.is_available()
+        elif name == "mineru-cloud":
+            available = MinerUCloudConverter.is_available()
+        elif name == "doc2x":
+            available = Doc2xConverter.is_available()
 
         engines[name] = {**info, "available": available}
 
@@ -990,7 +1412,11 @@ def print_engines_info():
     print("  pip install pymupdf4llm        # Fastest")
     print("  pip install pdfplumber         # Lightweight")
     print("  pip install llama-parse        # Cloud (LLAMA_CLOUD_API_KEY)")
-    print("  pip install requests           # For Mathpix (MATHPIX_APP_ID/KEY)")
+    print("  pip install requests           # For Mathpix/MinerU Cloud/Doc2x")
+
+    print("\nCloud engines (API key required):")
+    print("  export MINERU_API_KEY=xxx      # MinerU Cloud: https://mineru.net/")
+    print("  export DOC2X_API_KEY=xxx       # Doc2x: https://doc2x.noedgeai.com/")
 
     print("\nAMD GPU Setup:")
     print("  Windows: pip install torch-directml")

@@ -34,7 +34,12 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .converter import DocxConverter, get_converter
+from .converter import (
+    DocxConverter,
+    aggregate_markdown,
+    get_converter,
+    split_pdf,
+)
 from .utils import (
     DEFAULT_LANGS,
     SUPPORTED_DEVICES,
@@ -58,21 +63,57 @@ def convert_single_file(
     device: str = "auto",
     low_vram: bool = False,
     engine: str = "auto",
+    max_pages: int = 50,
 ):
     """Convert a single PDF or DOCX file."""
     suffix = input_path.suffix.lower()
     images = {}
 
+    cloud_engines = ("llamaparse", "mathpix", "mineru-cloud", "doc2x")
+
     if suffix == ".pdf":
-        converter = get_converter(
-            engine=engine,
-            force_ocr=force_ocr,
-            page_range=page_range,
-            langs=langs,
-            device=device,
-            low_vram=low_vram,
-        )
-        content, images = converter.convert_file(str(input_path))
+        needs_split = engine in cloud_engines
+
+        if needs_split:
+            split_files = split_pdf(str(input_path), max_pages=max_pages)
+
+            if len(split_files) == 1:
+                converter = get_converter(
+                    engine=engine,
+                    force_ocr=force_ocr,
+                    page_range=page_range,
+                    langs=langs,
+                    device=device,
+                    low_vram=low_vram,
+                )
+                content, images = converter.convert_file(split_files[0])
+            else:
+                results = []
+                for i, split_file in enumerate(split_files, 1):
+                    print(f"[Cloud] Processing chunk {i}/{len(split_files)}...")
+                    converter = get_converter(
+                        engine=engine,
+                        force_ocr=force_ocr,
+                        page_range=page_range,
+                        langs=langs,
+                        device=device,
+                        low_vram=low_vram,
+                    )
+                    chunk_md, chunk_images = converter.convert_file(split_file)
+                    results.append((chunk_md, chunk_images))
+
+                content, images = aggregate_markdown(results)
+                print(f"[Cloud] Aggregated {len(results)} chunks into final output")
+        else:
+            converter = get_converter(
+                engine=engine,
+                force_ocr=force_ocr,
+                page_range=page_range,
+                langs=langs,
+                device=device,
+                low_vram=low_vram,
+            )
+            content, images = converter.convert_file(str(input_path))
 
     elif suffix == ".docx":
         converter = DocxConverter()
@@ -159,6 +200,8 @@ ENGINE_DESCRIPTIONS = {
     "pdfplumber": "Lightweight, good tables, no GPU, no OCR",
     "llamaparse": "Cloud, API key (LLAMA_CLOUD_API_KEY)",
     "mathpix": "Cloud, math specialist, API key required",
+    "mineru-cloud": "Cloud, excellent for Chinese (MINERU_API_KEY)",
+    "doc2x": "Cloud, best for formulas (DOC2X_API_KEY)",
 }
 
 
@@ -209,9 +252,15 @@ PDF Engines (Local, Free):
 
 PDF Engines (Cloud, API key):
   llamaparse LlamaIndex cloud, excellent quality
-             Set: export LLAMA_CLOUD_API_KEY=xxx
+              Set: export LLAMA_CLOUD_API_KEY=xxx
   mathpix    Math/scientific documents
-             Set: export MATHPIX_APP_ID=xxx MATHPIX_APP_KEY=xxx
+              Set: export MATHPIX_APP_ID=xxx MATHPIX_APP_KEY=xxx
+  mineru-cloud MinerU online, excellent for Chinese
+              Set: export MINERU_API_KEY=xxx
+              Get key: https://mineru.net/
+  doc2x      Best for formulas, LaTeX output
+              Set: export DOC2X_API_KEY=xxx
+              Get key: https://doc2x.noedgeai.com/
 
 AMD GPU Support (IMPORTANT for RX580/RX590):
   Windows:   Use --device directml (ONLY option for AMD on Windows)
@@ -254,7 +303,13 @@ Low VRAM Tips (4-6GB):
         "--engine",
         default="auto",
         choices=SUPPORTED_ENGINES,
-        help="PDF engine (auto/marker/mineru/docling/pymupdf/pdfplumber/llamaparse/mathpix)",
+        help="PDF engine (auto/marker/mineru/docling/pymupdf/pdfplumber/llamaparse/mathpix/mineru-cloud/doc2x)",
+    )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=50,
+        help="Max pages per chunk for cloud converters (default: 50, large PDFs are split automatically)",
     )
     parser.add_argument(
         "--device",
@@ -531,6 +586,7 @@ Low VRAM Tips (4-6GB):
             device,
             low_vram,
             engine,
+            args.max_pages,
         )
 
     elif input_path.is_dir():

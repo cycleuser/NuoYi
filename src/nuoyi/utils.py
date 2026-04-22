@@ -56,6 +56,8 @@ SUPPORTED_ENGINES = [
     "pdfplumber",
     "llamaparse",
     "mathpix",
+    "mineru-cloud",
+    "doc2x",
 ]
 
 LOW_VRAM_THRESHOLD_GB = 6.0
