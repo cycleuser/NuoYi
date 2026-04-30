@@ -45,6 +45,7 @@ Low-Resource Optimization (inspired by docling/opendataloader):
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -425,6 +426,12 @@ class MinerUConverter:
     - Memory cleanup after conversion
     - Auto-detects OCR vs text-only pages (saves GPU time)
     - CPU-optimized thread count when device='cpu'
+
+    MinerU 1.3.x API:
+    - PymuDocDataset(pdf_bytes) → classify() → SupportedPdfParseMethod
+    - ds.apply(doc_analyze, ocr=...) → InferenceResult
+    - InferenceResult.pipe_txt_mode/pipe_ocr_mode(imageWriter) → PipeResult
+    - PipeResult.get_markdown(img_dir) → markdown text
     """
 
     def __init__(self, device: str = "auto", langs: str = DEFAULT_LANGS):
@@ -438,15 +445,19 @@ class MinerUConverter:
     def _get_api(self):
         if self._api is None:
             try:
-                from magic_pdf.data.data_reader_writer import FileBasedDataReader
+                from magic_pdf.config.enums import SupportedPdfParseMethod
+                from magic_pdf.data.data_reader_writer import FileBasedDataWriter
                 from magic_pdf.data.dataset import PymuDocDataset
                 from magic_pdf.model.doc_analyze_by_custom_model import doc_analyze
 
+                self._ensure_config()
+
                 print("[MinerU] Loading models (first run downloads ~1.5GB)...")
                 self._api = {
-                    "FileBasedDataReader": FileBasedDataReader,
                     "PymuDocDataset": PymuDocDataset,
                     "doc_analyze": doc_analyze,
+                    "FileBasedDataWriter": FileBasedDataWriter,
+                    "SupportedPdfParseMethod": SupportedPdfParseMethod,
                 }
             except ImportError:
                 raise ImportError(
@@ -456,35 +467,104 @@ class MinerUConverter:
                 )
         return self._api
 
+    @staticmethod
+    def _ensure_config():
+        """Ensure MinerU config file exists with sensible defaults."""
+        config_path = os.path.join(os.path.expanduser("~"), "magic-pdf.json")
+        if not os.path.exists(config_path):
+            default_config = {
+                "bucket-name-1": ["bucket", "ak", "sk", "endpoint"],
+                "bucket-name-2": ["bucket", "ak", "sk", "endpoint"],
+            }
+            try:
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(default_config, f, indent=2)
+                print(f"[MinerU] Created default config at {config_path}")
+            except Exception:
+                pass
+
+    @staticmethod
+    def _check_models_ready():
+        """Check if MinerU models are downloaded and ready."""
+        try:
+            from magic_pdf.model.doc_analyze_by_custom_model import get_local_models_dir
+
+            models_dir = get_local_models_dir()
+            models_path = Path(models_dir)
+
+            if not models_path.exists():
+                return (
+                    False,
+                    f"Models directory not found: {models_dir}\n"
+                    "Run: magic-pdf-model-download -d, or see https://github.com/opendatalab/MinerU",
+                )
+
+            mfd_dir = models_path / "MFD" / "YOLO"
+            if not (mfd_dir / "yolo_v8_ft.pt").exists() if mfd_dir.exists() else True:
+                if not list(models_path.rglob("*.pt")) and not list(models_path.rglob("*.onnx")):
+                    return (
+                        False,
+                        f"MinerU models not downloaded to {models_dir}\n"
+                        "Run: magic-pdf-model-download -d\n"
+                        "Or see: https://github.com/opendatalab/MinerU",
+                    )
+
+            return True, ""
+        except Exception as e:
+            return False, f"MinerU model check failed: {e}"
+
     def convert_file(self, pdf_path: str) -> tuple[str, dict]:
         api = self._get_api()
 
-        reader = api["FileBasedDataReader"]()
-        pdf_bytes = reader.read(pdf_path)
+        ready, msg = self._check_models_ready()
+        if not ready:
+            raise RuntimeError(msg)
+
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
 
         ds = api["PymuDocDataset"](pdf_bytes)
 
-        if ds.classify() == "ocr":
-            infer_result = ds.apply_ocr()
+        parse_method = ds.classify()
+        needs_ocr = parse_method == api["SupportedPdfParseMethod"].OCR
+
+        infer_result = ds.apply(api["doc_analyze"], ocr=needs_ocr)
+
+        import tempfile
+
+        img_dir = tempfile.mkdtemp(prefix="nuoyi_mineru_img_")
+        writer = api["FileBasedDataWriter"](img_dir)
+
+        if needs_ocr:
+            pipe_result = infer_result.pipe_ocr_mode(writer, lang=self.langs)
         else:
-            infer_result = ds.apply()
+            pipe_result = infer_result.pipe_txt_mode(writer, lang=self.langs)
 
-        content_list = infer_result.get_content_list(
-            api["FileBasedDataReader"]().read(pdf_path),
-            "",
-        )
+        md_text = pipe_result.get_markdown(img_dir)
 
-        md_text = content_list.get("markdown", "")
-        images = content_list.get("images", {})
+        images = {}
+        try:
+            import glob
+
+            for img_path in glob.glob(os.path.join(img_dir, "*")):
+                img_name = os.path.basename(img_path)
+                with open(img_path, "rb") as f:
+                    images[img_name] = f.read()
+        except Exception:
+            pass
 
         try:
             import gc
 
             gc.collect()
+
+            import shutil
+
+            shutil.rmtree(img_dir, ignore_errors=True)
         except Exception:
             pass
 
-        return clean_markdown(md_text), images or {}
+        return clean_markdown(md_text), images
 
     @staticmethod
     def is_available() -> bool:
