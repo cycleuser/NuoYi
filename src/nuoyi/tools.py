@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .utils import SUPPORTED_DEVICES
+from .utils import SUPPORTED_DEVICES, SUPPORTED_ENGINES
 
 TOOLS = [
     {
@@ -17,9 +17,11 @@ TOOLS = [
         "function": {
             "name": "nuoyi_convert_file",
             "description": (
-                "Convert a single PDF or DOCX file to Markdown. Uses "
-                "marker-pdf with surya OCR for high-quality offline "
-                "conversion. Returns the Markdown text and output path."
+                "Convert a single PDF or DOCX file to Markdown. Supports "
+                "multiple engines: marker (best quality), mineru (Chinese docs), "
+                "docling (balanced), pymupdf (fastest), pdfplumber (lightweight), "
+                "llamaparse/mathpix/mineru-cloud/doc2x (cloud, API key required). "
+                "Returns the Markdown text and output path."
             ),
             "parameters": {
                 "type": "object",
@@ -31,6 +33,15 @@ TOOLS = [
                     "output_path": {
                         "type": "string",
                         "description": "Output .md file path (default: same name with .md).",
+                    },
+                    "engine": {
+                        "type": "string",
+                        "enum": SUPPORTED_ENGINES,
+                        "description": (
+                            "PDF engine: auto (default), marker, mineru, docling, "
+                            "pymupdf, pdfplumber, llamaparse, mathpix, mineru-cloud, doc2x."
+                        ),
+                        "default": "auto",
                     },
                     "force_ocr": {
                         "type": "boolean",
@@ -61,6 +72,18 @@ TOOLS = [
                         "description": "Enable low VRAM mode for GPUs with <8GB memory.",
                         "default": False,
                     },
+                    "api_key": {
+                        "type": "string",
+                        "description": "API key for cloud engines (LlamaParse/MinerU Cloud/Doc2x).",
+                    },
+                    "app_id": {
+                        "type": "string",
+                        "description": "App ID for Mathpix.",
+                    },
+                    "app_key": {
+                        "type": "string",
+                        "description": "App key for Mathpix.",
+                    },
                 },
                 "required": ["input_path"],
             },
@@ -71,7 +94,8 @@ TOOLS = [
         "function": {
             "name": "nuoyi_convert_directory",
             "description": (
-                "Batch-convert all PDF and DOCX files in a directory to Markdown files."
+                "Batch-convert all PDF and DOCX files in a directory to Markdown files. "
+                "Supports multiple engines and recursive directory scanning."
             ),
             "parameters": {
                 "type": "object",
@@ -83,6 +107,15 @@ TOOLS = [
                     "output_dir": {
                         "type": "string",
                         "description": "Output directory (default: same as input).",
+                    },
+                    "engine": {
+                        "type": "string",
+                        "enum": SUPPORTED_ENGINES,
+                        "description": (
+                            "PDF engine: auto (default), marker, mineru, docling, "
+                            "pymupdf, pdfplumber, llamaparse, mathpix, mineru-cloud, doc2x."
+                        ),
+                        "default": "auto",
                     },
                     "force_ocr": {
                         "type": "boolean",

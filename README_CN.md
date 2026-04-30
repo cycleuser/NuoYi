@@ -8,13 +8,16 @@ NuoYi（挪移）使用 [marker-pdf](https://github.com/VikParuchuri/marker) 实
 
 ## 功能特点
 
-- **PDF 转 Markdown**：使用 marker-pdf 配合 surya OCR 实现高质量转换
+- **9 种 PDF 引擎**：marker、mineru、docling、pymupdf、pdfplumber、llamaparse、mathpix、mineru-cloud、doc2x
+- **PDF 转 Markdown**：多种引擎选择，支持高质量转换
 - **DOCX 转 Markdown**：原生支持 Microsoft Word 文档
 - **自动选择 GPU/CPU**：自动检测可用显存，显存不足时自动切换到 CPU
+- **智能引擎选择**：根据可用资源自动选择最佳引擎
 - **批量处理**：支持整个目录的文档批量转换
 - **图形界面**：基于 PySide6 的图形界面，方便批量转换操作
 - **图片提取**：自动从 PDF 中提取并保存图片
 - **多语言支持**：支持中、英、日、法、俄、德、西、葡、意、韩 10 种语言
+- **云引擎**：LlamaParse、Mathpix、MinerU Cloud、Doc2x，无需本地 GPU
 
 ## 安装
 
@@ -131,6 +134,48 @@ nuoyi ./papers --batch --device rocm --output ./output
 NuoYi 会自动配置 ROCm 环境变量（`HSA_ENABLE_SDMA=0`、`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`，以及自动检测的 `HSA_OVERRIDE_GFX_VERSION`）。
 
 详细的故障排除指南请参阅 [AMD_ROCM_SETUP.md](AMD_ROCM_SETUP.md)。
+
+## PDF 引擎
+
+NuoYi 支持 9 种 PDF 转换引擎：
+
+### 本地引擎（免费，离线）
+
+| 引擎 | 安装 | GPU | OCR | 模型大小 | 适用场景 |
+|------|------|-----|-----|---------|----------|
+| **marker** | `pip install marker-pdf` | 推荐 | 是 | ~3GB | 最佳质量 |
+| **mineru** | `pip install magic-pdf[full]` | 可选 | 是 | ~1.5GB | 中文文档 |
+| **docling** | `pip install docling` | 可选 | 是 | ~1.5GB | 均衡质量 |
+| **pymupdf** | `pip install pymupdf4llm` | 否 | 否 | 无 | 最快，数字版 PDF |
+| **pdfplumber** | `pip install pdfplumber` | 否 | 否 | 无 | 表格，轻量 |
+
+### 云端引擎（需要 API Key）
+
+| 引擎 | 安装 | 适用场景 | API Key |
+|------|------|----------|---------|
+| **llamaparse** | `pip install llama-parse` | 高质量通用 | `LLAMA_CLOUD_API_KEY` |
+| **mathpix** | `pip install requests` | 数学/科学文档 | `MATHPIX_APP_ID` + `MATHPIX_APP_KEY` |
+| **mineru-cloud** | `pip install requests` | 中文文档（在线） | `MINERU_API_KEY` |
+| **doc2x** | `pip install requests` | 公式/LaTeX | `DOC2X_API_KEY` |
+
+### 引擎选择
+
+```bash
+# 自动选择（默认：最佳可用引擎）
+nuoyi paper.pdf
+
+# 指定引擎
+nuoyi paper.pdf --engine mineru       # 适合中文
+nuoyi paper.pdf --engine docling     # 均衡质量
+nuoyi paper.pdf --engine pymupdf     # 最快，无需 GPU
+nuoyi paper.pdf --engine doc2x       # 云端，公式最佳
+nuoyi paper.pdf --engine mineru-cloud  # 云端，中文最佳
+
+# 无 GPU？使用轻量引擎
+nuoyi paper.pdf --engine pymupdf       # 数字版 PDF，最快
+nuoyi paper.pdf --engine pdfplumber    # 表格，轻量
+nuoyi paper.pdf --engine doc2x         # 云端，无需本地模型
+```
 
 ## 使用方法
 
@@ -268,6 +313,31 @@ markdown_text = docx_converter.convert_file("input.docx")
 | `--disable-ocr-models` | 禁用 OCR 模型（数字版 PDF，节省约 1.5GB 显存） |
 | `--gui` | 启动 PySide6 图形界面 |
 | `-V, --version` | 显示版本号并退出 |
+
+### 云端引擎
+
+NuoYi 支持 4 种云端 PDF 引擎，无需本地 GPU 或模型：
+
+```bash
+# LlamaParse - LlamaIndex 云服务
+export LLAMA_CLOUD_API_KEY=your_key
+nuoyi paper.pdf --engine llamaparse
+
+# Mathpix - 数学/科学文档最佳
+export MATHPIX_APP_ID=your_app_id
+export MATHPIX_APP_KEY=your_app_key
+nuoyi paper.pdf --engine mathpix
+
+# MinerU Cloud - 中文文档最佳
+export MINERU_API_KEY=your_key
+nuoyi paper.pdf --engine mineru-cloud
+
+# Doc2x - 公式最佳，支持 PDF/DOCX/PPTX
+export DOC2X_API_KEY=your_key
+nuoyi paper.pdf --engine doc2x
+```
+
+超过 50 页的大型 PDF 会自动分片处理。
 
 ## 内存管理
 

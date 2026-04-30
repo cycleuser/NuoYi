@@ -8,13 +8,16 @@ NuoYi uses [marker-pdf](https://github.com/VikParuchuri/marker) for high-quality
 
 ## Features
 
-- **PDF to Markdown**: High-quality conversion using marker-pdf with surya OCR
+- **9 PDF Engines**: marker, mineru, docling, pymupdf, pdfplumber, llamaparse, mathpix, mineru-cloud, doc2x
+- **PDF to Markdown**: High-quality conversion with multiple engine options
 - **DOCX to Markdown**: Native support for Microsoft Word documents
 - **Automatic GPU/CPU Selection**: Detects available VRAM and falls back to CPU if needed
+- **Smart Engine Selection**: Auto-selects the best engine based on available resources
 - **Batch Processing**: Convert entire directories of documents
 - **GUI Interface**: PySide6-based graphical interface for easy batch conversion
 - **Image Extraction**: Automatically extracts and saves images from PDFs
-- **Multi-language Support**: 10 languages supported including Chinese, English, Japanese, French, Russian, German, Spanish, Portuguese, Italian, Korean
+- **Multi-language Support**: 10 languages including Chinese, English, Japanese, etc.
+- **Cloud Engines**: LlamaParse, Mathpix, MinerU Cloud, Doc2x for zero-GPU environments
 
 ## Installation
 
@@ -131,6 +134,48 @@ nuoyi ./papers --batch --device rocm --output ./output
 NuoYi automatically configures ROCm environment variables (`HSA_ENABLE_SDMA=0`, `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`, and auto-detected `HSA_OVERRIDE_GFX_VERSION`).
 
 For detailed troubleshooting, see [AMD_ROCM_SETUP.md](AMD_ROCM_SETUP.md).
+
+## PDF Engines
+
+NuoYi supports 9 PDF conversion engines:
+
+### Local Engines (Free, Offline)
+
+| Engine | Install | GPU | OCR | Models | Best For |
+|--------|---------|-----|-----|--------|----------|
+| **marker** | `pip install marker-pdf` | Recommended | Yes | ~3GB | Best quality overall |
+| **mineru** | `pip install magic-pdf[full]` | Optional | Yes | ~1.5GB | Chinese documents |
+| **docling** | `pip install docling` | Optional | Yes | ~1.5GB | Balanced quality |
+| **pymupdf** | `pip install pymupdf4llm` | No | No | None | Fastest, digital PDFs |
+| **pdfplumber** | `pip install pdfplumber` | No | No | None | Tables, lightweight |
+
+### Cloud Engines (API Key Required)
+
+| Engine | Install | Best For | API Key |
+|--------|---------|----------|---------|
+| **llamaparse** | `pip install llama-parse` | Excellent quality | `LLAMA_CLOUD_API_KEY` |
+| **mathpix** | `pip install requests` | Math/science documents | `MATHPIX_APP_ID` + `MATHPIX_APP_KEY` |
+| **mineru-cloud** | `pip install requests` | Chinese docs (online) | `MINERU_API_KEY` |
+| **doc2x** | `pip install requests` | Formulas, LaTeX | `DOC2X_API_KEY` |
+
+### Engine Selection
+
+```bash
+# Auto-select (default: best available engine)
+nuoyi paper.pdf
+
+# Use specific engine
+nuoyi paper.pdf --engine mineru       # Great for Chinese
+nuoyi paper.pdf --engine docling     # Balanced quality
+nuoyi paper.pdf --engine pymupdf     # Fastest, no GPU
+nuoyi paper.pdf --engine doc2x       # Cloud, best formulas
+nuoyi paper.pdf --engine mineru-cloud  # Cloud, Chinese docs
+
+# No GPU? Use lightweight engines
+nuoyi paper.pdf --engine pymupdf       # Digital PDFs, fastest
+nuoyi paper.pdf --engine pdfplumber    # Tables, lightweight
+nuoyi paper.pdf --engine doc2x         # Cloud, no local models needed
+```
 
 ## Usage
 
@@ -268,6 +313,31 @@ Use `nuoyi --list-langs` to see the full list. Default: `zh,en`.
 | `--disable-ocr-models` | Disable OCR models for digital PDFs (~1.5GB VRAM saved) |
 | `--gui` | Launch PySide6 GUI mode |
 | `-V, --version` | Show version and exit |
+
+### Cloud Engines
+
+NuoYi supports 4 cloud-based PDF engines that require no local GPU or models:
+
+```bash
+# LlamaParse - LlamaIndex cloud service
+export LLAMA_CLOUD_API_KEY=your_key
+nuoyi paper.pdf --engine llamaparse
+
+# Mathpix - Best for math/scientific documents
+export MATHPIX_APP_ID=your_app_id
+export MATHPIX_APP_KEY=your_app_key
+nuoyi paper.pdf --engine mathpix
+
+# MinerU Cloud - Excellent for Chinese documents
+export MINERU_API_KEY=your_key
+nuoyi paper.pdf --engine mineru-cloud
+
+# Doc2x - Best for formulas, supports PDF/DOCX/PPTX
+export DOC2X_API_KEY=your_key
+nuoyi paper.pdf --engine doc2x
+```
+
+Large PDFs (>50 pages) are automatically split into chunks for cloud processing.
 
 ## Memory Management
 

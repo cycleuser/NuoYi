@@ -63,6 +63,81 @@ SUPPORTED_ENGINES = [
 LOW_VRAM_THRESHOLD_GB = 6.0
 VERY_LOW_VRAM_THRESHOLD_GB = 4.0
 
+LARGE_PDF_PAGES = 100
+
+DOCUMENT_TIMEOUT_DEFAULT = 300
+
+
+def estimate_pdf_complexity(pdf_path: str | Path) -> str:
+    """Estimate PDF complexity for engine selection.
+
+    Returns 'simple', 'moderate', or 'complex'.
+    Simple: digital text, few images, no complex layouts
+    Moderate: mix of text and images
+    Complex: scanned, heavy OCR needed, many tables/formulas
+
+    Inspired by opendataloader-pdf's triage system.
+    """
+    try:
+        import fitz
+
+        doc = fitz.open(str(pdf_path))
+        total_pages = len(doc)
+
+        if total_pages == 0:
+            doc.close()
+            return "simple"
+
+        text_pages = 0
+        image_pages = 0
+        total_images = 0
+        total_text_len = 0
+
+        for page in doc:
+            text = page.get_text().strip()
+            images = page.get_images()
+            total_images += len(images)
+            total_text_len += len(text)
+
+            if len(text) > 50:
+                text_pages += 1
+            if len(images) > 0:
+                image_pages += 1
+
+        doc.close()
+
+        avg_text = total_text_len / total_pages
+        image_ratio = image_pages / total_pages
+
+        if avg_text < 100 and image_ratio > 0.5:
+            return "complex"
+        if image_ratio > 0.3 and avg_text < 500:
+            return "complex"
+        if total_pages > LARGE_PDF_PAGES and image_ratio < 0.1:
+            return "simple"
+        if image_ratio < 0.1 and avg_text > 500:
+            return "simple"
+        if image_ratio > 0.2 or avg_text < 300:
+            return "moderate"
+
+        return "simple"
+
+    except Exception:
+        return "moderate"
+
+
+def get_pdf_page_count(pdf_path: str | Path) -> int:
+    """Quick page count using PyMuPDF."""
+    try:
+        import fitz
+
+        doc = fitz.open(str(pdf_path))
+        count = len(doc)
+        doc.close()
+        return count
+    except Exception:
+        return 0
+
 
 def get_system_info() -> dict:
     """Get system information for device selection."""

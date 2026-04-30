@@ -4,12 +4,34 @@ Guidelines for agentic coding agents working on the NuoYi codebase.
 
 ## Project Overview
 
-NuoYi converts PDF and DOCX documents to Markdown using multiple PDF engines (marker, mineru, docling, pymupdf, pdfplumber, llamaparse, mathpix). Supports CLI, GUI (PySide6), Web (Flask), and Python API interfaces.
+NuoYi converts PDF and DOCX documents to Markdown using multiple PDF engines (marker, mineru, docling, pymupdf, pdfplumber, llamaparse, mathpix, mineru-cloud, doc2x). Supports CLI, GUI (PySide6), Web (Flask), and Python API interfaces.
+
+**Supported Engines:**
+
+| Engine | Type | GPU | OCR | Models | Best For |
+|--------|------|-----|-----|--------|----------|
+| marker | local | recommended | yes | ~3GB | Best quality overall |
+| mineru | local | optional | yes | ~1.5GB | Chinese documents |
+| docling | local | optional | yes | ~1.5GB | Balanced quality |
+| pymupdf | local | no | no | none | Fastest, digital PDFs |
+| pdfplumber | local | no | no | none | Tables, lightweight |
+| llamaparse | cloud | N/A | yes | cloud | Excellent quality |
+| mathpix | cloud | N/A | yes | cloud | Math/science |
+| mineru-cloud | cloud | N/A | yes | cloud | Chinese docs (online) |
+| doc2x | cloud | N/A | yes | cloud | Formulas, LaTeX |
 
 **AMD GPU Support:**
 - Windows: DirectML (all AMD GPUs including RX580, RX590, RX 6000/7000)
 - Linux: ROCm (RDNA GPUs only - RX 5000/6000/7000 series)
 - **RX580/RX590 (Polaris) do NOT support ROCm - use DirectML on Windows**
+
+**Low-Resource Optimization:**
+- CPU-optimized mode with thread count tuning (`optimize_for_cpu_inference()`)
+- Lazy model initialization - models loaded only on first `$method->convert_file()` call
+- Per-converter memory cleanup with `gc.collect()` after processing
+- Automatic engine selection: GPU → marker, CPU → mineru/docling, no-models → pymupdf/pdfplumber
+- Cloud engines (llamaparse, mathpix, mineru-cloud, doc2x) for zero-GPU environments
+- `select_engine("auto")` considers available resources and engine availability
 
 ## Build, Test, and Lint Commands
 

@@ -13,6 +13,8 @@ Local (free, offline):
 Cloud (API key required):
 - llamaparse: LlamaIndex cloud service, excellent quality
 - mathpix: Best for math/scientific documents
+- mineru-cloud: MinerU online, excellent for Chinese
+- doc2x: Best for formulas, LaTeX output, supports PDF/DOCX/PPTX/images
 
 AMD GPU Support:
 - ROCm: AMD GPUs on Linux (RX 500/5000/6000/7000 series)
@@ -32,6 +34,13 @@ Memory Optimization for Low VRAM (4-6GB):
 - FP16/INT8 quantization
 - Model offloading
 - Aggressive garbage collection
+
+Low-Resource Optimization (inspired by docling/opendataloader):
+- CPU-optimized mode with thread count tuning
+- Lazy model initialization (models loaded only when needed)
+- Per-converter memory cleanup after processing
+- Automatic engine selection based on available resources
+- Cloud engines for zero-GPU environments
 """
 
 from __future__ import annotations
@@ -48,11 +57,14 @@ from .utils import (
     clean_markdown,
     clear_gpu_memory,
     enable_low_vram_mode,
+    estimate_pdf_complexity,
     get_gpu_memory_info,
+    get_pdf_page_count,
     get_rocm_memory_info,
     is_amd_gpu_available,
     is_directml_available,
     is_rocm_available,
+    optimize_for_cpu_inference,
     select_device,
     setup_memory_optimization,
     _setup_rocm_env,
@@ -68,11 +80,10 @@ if is_rocm_available():
     _setup_rocm_env()
 
 import fitz  # noqa: E402
-
+from marker.config.parser import ConfigParser  # noqa: E402
 from marker.converters.pdf import PdfConverter  # noqa: E402
 from marker.models import create_model_dict  # noqa: E402
 from marker.output import text_from_rendered  # noqa: E402
-from marker.config.parser import ConfigParser  # noqa: E402
 
 SUPPORTED_ENGINES = [
     "auto",
@@ -334,17 +345,28 @@ class DoclingConverter:
     Install: pip install docling
 
     AMD Support: Works with ROCm (Linux) and DirectML (Windows)
+
+    Low-Resource Optimization:
+    - Models loaded lazily on first conversion
+    - Memory cleanup after conversion
+    - CPU-optimized thread count
+    - Works well without GPU (set device='cpu')
     """
 
-    def __init__(self, device: str = "auto"):
+    def __init__(self, device: str = "auto", langs: str = DEFAULT_LANGS):
         self.device = select_device(device) if device != "auto" else "cpu"
+        self.langs = langs
         self._converter = None
+
+        if self.device == "cpu":
+            optimize_for_cpu_inference()
 
     def _get_converter(self):
         if self._converter is None:
             try:
                 from docling.document_converter import DocumentConverter
 
+                print("[Docling] Loading models (first run downloads ~1.5GB)...")
                 self._converter = DocumentConverter()
             except ImportError:
                 raise ImportError("pip install docling")
@@ -355,7 +377,18 @@ class DoclingConverter:
         result = conv.convert(pdf_path)
 
         if result and result.document:
-            return clean_markdown(result.document.export_to_markdown()), {}
+            md_text = result.document.export_to_markdown()
+            try:
+                if result.document.pictures:
+                    images = {}
+                    for pic in result.document.pictures:
+                        if hasattr(pic, "image") and pic.image is not None:
+                            img_name = f"docling_image_{len(images) + 1}.png"
+                            images[img_name] = pic.image
+                    return clean_markdown(md_text), images
+            except Exception:
+                pass
+            return clean_markdown(md_text), {}
 
         return "", {}
 
@@ -386,12 +419,21 @@ class MinerUConverter:
     - Good table recognition
     - Smaller models than marker
     - Works on CPU
+
+    Low-Resource Optimization:
+    - Models loaded lazily on first conversion
+    - Memory cleanup after conversion
+    - Auto-detects OCR vs text-only pages (saves GPU time)
+    - CPU-optimized thread count when device='cpu'
     """
 
     def __init__(self, device: str = "auto", langs: str = DEFAULT_LANGS):
         self.device = select_device(device) if device != "auto" else "cpu"
         self.langs = langs
         self._api = None
+
+        if self.device == "cpu":
+            optimize_for_cpu_inference()
 
     def _get_api(self):
         if self._api is None:
@@ -400,6 +442,7 @@ class MinerUConverter:
                 from magic_pdf.data.dataset import PymuDocDataset
                 from magic_pdf.model.doc_analyze_by_custom_model import doc_analyze
 
+                print("[MinerU] Loading models (first run downloads ~1.5GB)...")
                 self._api = {
                     "FileBasedDataReader": FileBasedDataReader,
                     "PymuDocDataset": PymuDocDataset,
@@ -433,6 +476,13 @@ class MinerUConverter:
 
         md_text = content_list.get("markdown", "")
         images = content_list.get("images", {})
+
+        try:
+            import gc
+
+            gc.collect()
+        except Exception:
+            pass
 
         return clean_markdown(md_text), images or {}
 
@@ -1170,10 +1220,31 @@ class Doc2xConverter:
         return bool(os.environ.get("DOC2X_API_KEY"))
 
 
-def select_engine(engine: str = "auto", has_gpu: bool = True) -> str:
-    """Auto-select best available engine."""
+def select_engine(
+    engine: str = "auto",
+    has_gpu: bool = True,
+    pdf_path: str | None = None,
+) -> str:
+    """Auto-select best available engine based on resources and availability.
+
+    Selection priority:
+    1. GPU available (>=4GB): marker (best quality)
+    2. CPU with mineru: mineru (good Chinese support, works on CPU)
+    3. CPU with docling: docling (balanced, works on CPU)
+    4. Fallback: pymupdf (fastest, no models needed)
+    5. Last resort: pdfplumber (lightweight)
+
+    If pdf_path is provided, uses complexity estimation:
+    - Simple (digital text, few images): prefers pymupdf for speed
+    - Moderate: prefers mineru/docling for balanced quality
+    - Complex (scanned, heavy OCR): prefers marker (if GPU) or mineru
+    """
     if engine != "auto":
         return engine
+
+    complexity = None
+    if pdf_path:
+        complexity = estimate_pdf_complexity(pdf_path)
 
     if has_gpu:
         try:
@@ -1182,6 +1253,10 @@ def select_engine(engine: str = "auto", has_gpu: bool = True) -> str:
                 total, _ = get_rocm_memory_info()
 
             if total >= 4 and MarkerPDFConverter.is_available():
+                if complexity == "simple" and PyMuPDFConverter.is_available():
+                    print("[Engine] Auto-selected: pymupdf (simple digital PDF, fastest)")
+                    return "pymupdf"
+
                 backend_info = ""
                 if _is_amd_gpu():
                     backend_info = f" (AMD via {_get_amd_backend() or 'auto'})"
@@ -1190,12 +1265,24 @@ def select_engine(engine: str = "auto", has_gpu: bool = True) -> str:
         except Exception:
             pass
 
+    if complexity == "simple" and PyMuPDFConverter.is_available():
+        print("[Engine] Auto-selected: pymupdf (simple digital PDF, no GPU needed)")
+        return "pymupdf"
+
+    for name, check_fn, label in [
+        ("mineru", MinerUConverter.is_available, "Great for Chinese, CPU-friendly"),
+        ("docling", DoclingConverter.is_available, "Balanced, CPU-friendly"),
+    ]:
+        if check_fn():
+            print(f"[Engine] Auto-selected: {name} ({label})")
+            return name
+
     if PyMuPDFConverter.is_available():
-        print("[Engine] Auto-selected: pymupdf")
+        print("[Engine] Auto-selected: pymupdf (fastest, no models)")
         return "pymupdf"
 
     if PDFPlumberConverter.is_available():
-        print("[Engine] Auto-selected: pdfplumber")
+        print("[Engine] Auto-selected: pdfplumber (lightweight)")
         return "pdfplumber"
 
     return "marker"

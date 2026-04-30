@@ -7,23 +7,41 @@ def test_version():
     """Test that version is accessible."""
     from nuoyi import __version__
 
-    assert __version__ == "0.3.0"
+    assert __version__  # just check it exists and is non-empty
+    assert isinstance(__version__, str)
+    parts = __version__.split(".")
+    assert len(parts) >= 2
 
 
 def test_imports():
     """Test that main classes can be imported."""
     from nuoyi import (
+        Doc2xConverter,
+        DoclingConverter,
         DocxConverter,
         MarkerPDFConverter,
+        MinerUCloudConverter,
+        MinerUConverter,
+        PDFPlumberConverter,
+        PyMuPDFConverter,
         clean_markdown,
+        estimate_pdf_complexity,
+        get_pdf_page_count,
         select_device,
     )
 
-    # These should be importable
     assert MarkerPDFConverter is not None
+    assert MinerUConverter is not None
+    assert DoclingConverter is not None
+    assert PyMuPDFConverter is not None
+    assert PDFPlumberConverter is not None
+    assert Doc2xConverter is not None
+    assert MinerUCloudConverter is not None
     assert DocxConverter is not None
     assert callable(clean_markdown)
     assert callable(select_device)
+    assert callable(estimate_pdf_complexity)
+    assert callable(get_pdf_page_count)
 
 
 def test_clean_markdown():

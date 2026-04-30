@@ -146,6 +146,7 @@ def convert_file(
     input_path: str | Path,
     *,
     output_path: str | Path | None = None,
+    engine: str = "auto",
     force_ocr: bool = False,
     page_range: str | None = None,
     langs: str = "zh,en",
@@ -153,6 +154,10 @@ def convert_file(
     low_vram: bool = False,
     use_cache: bool = True,
     allow_fallback: bool = False,
+    api_key: str | None = None,
+    app_id: str | None = None,
+    app_key: str | None = None,
+    max_pages: int = 50,
 ) -> ToolResult:
     """Convert a single PDF or DOCX file to Markdown.
 
@@ -162,6 +167,9 @@ def convert_file(
         Path to the input PDF or DOCX file.
     output_path : str, Path, or None
         Output .md file path. Defaults to input stem + .md.
+    engine : str
+        PDF engine: auto, marker, mineru, docling, pymupdf, pdfplumber,
+        llamaparse, mathpix, mineru-cloud, doc2x.
     force_ocr : bool
         Force OCR even for digital PDFs.
     page_range : str or None
@@ -176,6 +184,14 @@ def convert_file(
         Use cached converter to avoid reloading models (default: True).
     allow_fallback : bool
         Allow automatic CPU fallback on GPU OOM (default: False).
+    api_key : str or None
+        API key for LlamaParse/MinerU Cloud/Doc2x.
+    app_id : str or None
+        App ID for Mathpix.
+    app_key : str or None
+        App key for Mathpix.
+    max_pages : int
+        Max pages per chunk for cloud converters (default: 50).
 
     Returns
     -------
@@ -200,32 +216,85 @@ def convert_file(
 
     try:
         from . import __version__
+        from .converter import (
+            aggregate_markdown,
+            get_converter,
+            select_engine,
+            split_pdf,
+        )
         from .utils import save_images_and_update_markdown
 
         images = {}
+        selected_engine = engine
         if suffix == ".pdf":
-            if use_cache:
-                converter = _get_cached_converter(
-                    "marker",
-                    force_ocr=force_ocr,
-                    page_range=page_range,
-                    langs=langs,
-                    device=device,
-                    low_vram=low_vram,
-                    allow_fallback=allow_fallback,
-                )
-            else:
-                from .converter import MarkerPDFConverter
+            cloud_engines = ("llamaparse", "mathpix", "mineru-cloud", "doc2x")
+            selected_engine = select_engine(engine, pdf_path=str(input_path))
 
-                converter = MarkerPDFConverter(
+            if selected_engine in cloud_engines:
+                split_files = split_pdf(str(input_path), max_pages=max_pages)
+                if len(split_files) == 1:
+                    converter = get_converter(
+                        engine=selected_engine,
+                        force_ocr=force_ocr,
+                        page_range=page_range,
+                        langs=langs,
+                        device=device,
+                        low_vram=low_vram,
+                        api_key=api_key,
+                        app_id=app_id,
+                        app_key=app_key,
+                    )
+                    content, images = converter.convert_file(split_files[0])
+                else:
+                    results = []
+                    for i, split_file in enumerate(split_files, 1):
+                        converter = get_converter(
+                            engine=selected_engine,
+                            force_ocr=force_ocr,
+                            page_range=page_range,
+                            langs=langs,
+                            device=device,
+                            low_vram=low_vram,
+                            api_key=api_key,
+                            app_id=app_id,
+                            app_key=app_key,
+                        )
+                        chunk_md, chunk_images = converter.convert_file(split_file)
+                        results.append((chunk_md, chunk_images))
+                    content, images = aggregate_markdown(results)
+            elif selected_engine in ("mineru", "docling", "pymupdf", "pdfplumber"):
+                converter = get_converter(
+                    engine=selected_engine,
                     force_ocr=force_ocr,
                     page_range=page_range,
                     langs=langs,
                     device=device,
                     low_vram=low_vram,
-                    allow_fallback=allow_fallback,
                 )
-            content, images = converter.convert_file(str(input_path))
+                content, images = converter.convert_file(str(input_path))
+            else:
+                if use_cache:
+                    converter = _get_cached_converter(
+                        "marker",
+                        force_ocr=force_ocr,
+                        page_range=page_range,
+                        langs=langs,
+                        device=device,
+                        low_vram=low_vram,
+                        allow_fallback=allow_fallback,
+                    )
+                else:
+                    from .converter import MarkerPDFConverter
+
+                    converter = MarkerPDFConverter(
+                        force_ocr=force_ocr,
+                        page_range=page_range,
+                        langs=langs,
+                        device=device,
+                        low_vram=low_vram,
+                        allow_fallback=allow_fallback,
+                    )
+                content, images = converter.convert_file(str(input_path))
         else:
             if use_cache:
                 converter = _get_cached_converter("docx")
@@ -248,6 +317,7 @@ def convert_file(
                 "markdown": content,
                 "output_path": str(output_path),
                 "image_count": len(images),
+                "engine": selected_engine if suffix == ".pdf" else "docx",
             },
             metadata={
                 "input_path": str(input_path),

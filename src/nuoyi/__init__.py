@@ -13,6 +13,8 @@ Local (free, offline):
 Cloud (API key required):
 - llamaparse: LlamaIndex cloud, excellent quality
 - mathpix: Best for math/scientific documents
+- mineru-cloud: MinerU online, excellent for Chinese
+- doc2x: Best for formulas, LaTeX, supports PDF/DOCX/PPTX/images
 
 AMD GPU Support:
 - Windows: Use --device directml (AMD Radeon GPUs)
@@ -20,7 +22,7 @@ AMD GPU Support:
   * Polaris GPUs (RX 400/500) require DirectML
 - Linux: Use --device rocm (AMD Radeon GPUs)
   * Only newer AMD GPUs (RDNA, CDNA)
-  * RX580/RX590 NOT supported on ROCm
+  * RX580/RX590 (Polaris) NOT supported on ROCm
 - Low VRAM: Use --low-vram for 4-6GB GPUs
 
 Acceleration backends:
@@ -34,6 +36,10 @@ Acceleration backends:
 Usage:
     # CLI - auto select engine
     nuoyi input.pdf -o output.md
+
+    # CLI - specific engine
+    nuoyi input.pdf --engine mineru -o output.md
+    nuoyi input.pdf --engine doc2x -o output.md
 
     # CLI - AMD GPU on Windows (RX580, RX590, etc.)
     nuoyi input.pdf --device directml
@@ -81,11 +87,20 @@ from .api import (
 )
 from .converter import (
     Doc2xConverter,
+    DoclingConverter,
     DocxConverter,
+    LlamaParseConverter,
     MarkerPDFConverter,
+    MathpixConverter,
     MinerUCloudConverter,
+    MinerUConverter,
+    PDFPlumberConverter,
+    PyMuPDFConverter,
+    aggregate_markdown,
     get_converter,
     list_available_engines,
+    print_engines_info,
+    split_pdf,
 )
 from .utils import (
     DEFAULT_LANGS,
@@ -99,10 +114,12 @@ from .utils import (
     clear_mlx_memory,
     enable_low_vram_mode,
     enable_very_low_vram_mode,
+    estimate_pdf_complexity,
     get_device_info,
     get_directml_device_count,
     get_directml_device_name,
     get_gpu_memory_info,
+    get_pdf_page_count,
     get_recommended_batch_size,
     get_rocm_memory_info,
     get_system_info,
@@ -129,11 +146,20 @@ __all__ = [
     "__author__",
     "__license__",
     "MarkerPDFConverter",
-    "DocxConverter",
+    "MinerUConverter",
+    "DoclingConverter",
+    "PyMuPDFConverter",
+    "PDFPlumberConverter",
+    "LlamaParseConverter",
+    "MathpixConverter",
     "MinerUCloudConverter",
     "Doc2xConverter",
+    "DocxConverter",
     "get_converter",
+    "split_pdf",
+    "aggregate_markdown",
     "list_available_engines",
+    "print_engines_info",
     "ToolResult",
     "api_convert_file",
     "api_convert_directory",
@@ -151,9 +177,11 @@ __all__ = [
     "clear_all_gpu_memory",
     "enable_low_vram_mode",
     "enable_very_low_vram_mode",
+    "estimate_pdf_complexity",
     "optimize_for_cpu_inference",
     "get_device_info",
     "get_gpu_memory_info",
+    "get_pdf_page_count",
     "get_rocm_memory_info",
     "get_directml_device_name",
     "get_directml_device_count",

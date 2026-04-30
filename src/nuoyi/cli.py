@@ -13,6 +13,8 @@ Local (free, offline):
 Cloud (API key required):
 - llamaparse: LlamaIndex cloud, excellent quality
 - mathpix: Best for math/scientific documents
+- mineru-cloud: MinerU online, excellent for Chinese
+- doc2x: Best for formulas, LaTeX, supports PDF/DOCX/PPTX
 
 AMD GPU Support:
 - Windows: Use --device directml (AMD Radeon GPUs)
@@ -500,7 +502,7 @@ Low VRAM Tips (4-6GB):
         print("  pip install pymupdf4llm        # Fastest")
         print("  pip install pdfplumber         # Lightweight")
         print("  pip install llama-parse        # Cloud (LLAMA_CLOUD_API_KEY)")
-        print("  pip install requests           # For Mathpix")
+        print("  pip install requests           # For Mathpix/MinerU Cloud/Doc2x")
 
         print("\nAMD GPU Setup:")
         print("  Windows: pip install torch-directml")
