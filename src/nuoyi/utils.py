@@ -1453,6 +1453,11 @@ def save_images_and_update_markdown(
         if old_ref in updated_text:
             updated_text = updated_text.replace(old_ref, new_ref)
 
+        old_html = f'src="./{img_name}"'
+        new_html = f'src="{encoded_path}"'
+        if old_html in updated_text:
+            updated_text = updated_text.replace(old_html, new_html)
+
         base_name = Path(img_name).name
         if base_name != img_name:
             old_ref = f"]({img_name})"

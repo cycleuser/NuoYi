@@ -66,6 +66,7 @@ def convert_single_file(
     low_vram: bool = False,
     engine: str = "auto",
     max_pages: int = 50,
+    api_key: str | None = None,
 ):
     """Convert a single PDF or DOCX file."""
     suffix = input_path.suffix.lower()
@@ -87,6 +88,7 @@ def convert_single_file(
                     langs=langs,
                     device=device,
                     low_vram=low_vram,
+                    api_key=api_key,
                 )
                 content, images = converter.convert_file(split_files[0])
             else:
@@ -100,6 +102,7 @@ def convert_single_file(
                         langs=langs,
                         device=device,
                         low_vram=low_vram,
+                        api_key=api_key,
                     )
                     chunk_md, chunk_images = converter.convert_file(split_file)
                     results.append((chunk_md, chunk_images))
@@ -114,6 +117,7 @@ def convert_single_file(
                 langs=langs,
                 device=device,
                 low_vram=low_vram,
+                api_key=api_key,
             )
             content, images = converter.convert_file(str(input_path))
 
@@ -151,6 +155,7 @@ def convert_directory(
     existing_files: str = "ask",
     on_oom: str = "fallback",
     pending_file: str | None = None,
+    api_key: str | None = None,
 ):
     """Batch convert all PDF/DOCX files in a directory with optimized memory."""
 
@@ -169,6 +174,8 @@ def convert_directory(
         existing_files=existing_files,
         on_oom=on_oom,
         pending_file=pending_file,
+        api_key=api_key,
+        engine=engine,
     )
 
     if not result.success:
@@ -312,6 +319,12 @@ Low VRAM Tips (4-6GB):
         type=int,
         default=50,
         help="Max pages per chunk for cloud converters (default: 50, large PDFs are split automatically)",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="API key for cloud engines (Doc2x/MinerU Cloud/LlamaParse). Overrides env vars.",
     )
     parser.add_argument(
         "--device",
@@ -589,6 +602,7 @@ Low VRAM Tips (4-6GB):
             low_vram,
             engine,
             args.max_pages,
+            args.api_key,
         )
 
     elif input_path.is_dir():
@@ -621,6 +635,7 @@ Low VRAM Tips (4-6GB):
             args.existing_files,
             args.on_oom,
             args.pending_file,
+            args.api_key,
         )
 
     else:

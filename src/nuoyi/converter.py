@@ -1034,6 +1034,10 @@ def aggregate_markdown(
                 old_ref = f"](./{img_name})"
                 md_text = md_text.replace(old_ref, new_ref)
 
+                old_html = f'src="./{img_name}"'
+                new_html = f'src="./{new_name}"'
+                md_text = md_text.replace(old_html, new_html)
+
             all_images.update(new_images)
 
         all_md_parts.append(md_text)
@@ -1262,27 +1266,66 @@ class Doc2xConverter:
         raise RuntimeError(f"Doc2x timeout ({self.POLL_TIMEOUT}s)")
 
     def _download_result(self, result_data: dict) -> tuple[str, dict]:
-        """Extract markdown and images from result data."""
+        """Extract markdown and images from result data.
+
+        Handles both page["images"] dict and <img> tags embedded in markdown.
+        Downloads all images and replaces external URLs with local filenames.
+        """
+        import re
+
+        import requests as req
+
         pages = result_data.get("result", {}).get("pages", [])
 
         md_parts = []
         images = {}
+        img_counter = 0
 
         for page in pages:
             md_text = page.get("md", "")
-            if md_text:
-                md_parts.append(md_text)
+            if not md_text:
+                continue
 
-            # Extract images from page data
+            # Extract images from page["images"] dict
             page_images = page.get("images", {})
             for img_name, img_url in page_images.items():
                 try:
-                    import requests as req
-                    img_resp = req.get(img_url, timeout=10)
+                    img_resp = req.get(img_url, timeout=30)
                     if img_resp.status_code == 200:
                         images[img_name] = img_resp.content
-                except Exception:
-                    pass
+                    else:
+                        print(f"  [Warning] Failed to download image {img_name}: HTTP {img_resp.status_code}")
+                except Exception as e:
+                    print(f"  [Warning] Failed to download image {img_name}: {e}")
+
+            # Extract <img src="..."/> tags from markdown text
+            img_pattern = re.compile(r'<img\s+src="([^"]*)"[^>]*/?>')
+            img_urls = img_pattern.findall(md_text)
+
+            for img_url in img_urls:
+                # Generate a sensible filename from URL
+                img_counter += 1
+                ext_match = re.search(r'\.(jpg|jpeg|png|gif|webp|bmp)(?:\?|$)', img_url)
+                ext = ext_match.group(1) if ext_match else "png"
+                img_name = f"image_{img_counter:04d}.{ext}"
+
+                if img_name in images:
+                    continue
+
+                try:
+                    response = req.get(img_url, timeout=30)
+                    if response.status_code == 200:
+                        images[img_name] = response.content
+                        # Replace external URL with local filename in markdown
+                        md_text = md_text.replace(
+                            f'src="{img_url}"', f'src="./{img_name}"'
+                        )
+                    else:
+                        print(f"  [Warning] Failed to download image {img_url[:80]}...: HTTP {response.status_code}")
+                except Exception as e:
+                    print(f"  [Warning] Failed to download image {img_url[:80]}...: {e}")
+
+            md_parts.append(md_text)
 
         return "\n\n".join(md_parts), images
 

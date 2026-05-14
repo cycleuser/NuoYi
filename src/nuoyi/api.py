@@ -343,6 +343,9 @@ def convert_directory(
     on_progress: callable | None = None,
     on_oom: str = "defer",
     pending_file: str | Path | None = None,
+    api_key: str | None = None,
+    engine: str = "auto",
+    max_pages: int = 50,
 ) -> ToolResult:
     """Batch-convert all PDF/DOCX files in a directory with optimized memory management.
 
@@ -610,6 +613,7 @@ def convert_directory(
             r = convert_file(
                 f,
                 output_path=out_path,
+                engine=engine,
                 force_ocr=force_ocr,
                 page_range=page_range,
                 langs=langs,
@@ -617,6 +621,8 @@ def convert_directory(
                 low_vram=low_vram,
                 use_cache=True,
                 allow_fallback=(on_oom == "fallback"),
+                api_key=api_key,
+                max_pages=max_pages,
             )
 
             if r.success:
