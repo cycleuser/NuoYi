@@ -1830,12 +1830,12 @@ class SuryaLiteConverter:
         try:
             from surya.foundation import FoundationPredictor
             from surya.recognition import RecognitionPredictor
-            from surya.layout import LayoutPredictor
+            from surya.detection import DetectionPredictor
             from surya.settings import settings
 
             self._foundation = FoundationPredictor()
-            self._rec = RecognitionPredictor(self._foundation, langs=[self.langs])
-            self._layout = LayoutPredictor(self._foundation)
+            self._rec = RecognitionPredictor(self._foundation)
+            self._det = DetectionPredictor()
             self._loaded = True
             print("[SuryaLite] Models loaded (~2GB)")
         except ImportError:
@@ -1851,12 +1851,9 @@ class SuryaLiteConverter:
         for page in doc:
             pix = page.get_pixmap(dpi=200)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            # Layout detection + reading order
-            layout = self._layout([img])[0]
-            # OCR
-            rec = self._rec([img])[0]
-            # Combine by reading order
-            lines = sorted(rec.text_lines, key=lambda l: l.bbox[1])
+            # OCR with detection
+            rec = self._rec([img], det_predictor=self._det)[0]
+            lines = sorted(rec.text_lines, key=lambda l: l.bbox[1] if hasattr(l, 'bbox') else 0)
             text = "\n".join(l.text for l in lines if l.text and l.text.strip())
             if text.strip():
                 parts.append(text.strip())

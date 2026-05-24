@@ -58,6 +58,10 @@ SUPPORTED_ENGINES = [
     "mathpix",
     "mineru-cloud",
     "doc2x",
+    "nougat",
+    "doctr",
+    "surya-lite",
+    "easyocr",
 ]
 
 LOW_VRAM_THRESHOLD_GB = 6.0
