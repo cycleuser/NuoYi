@@ -99,6 +99,8 @@ SUPPORTED_ENGINES = [
     "doc2x",
     "nougat",
     "doctr",
+    "surya-lite",
+    "easyocr",
 ]
 
 ENGINE_INFO = {
@@ -188,6 +190,22 @@ ENGINE_INFO = {
         "models": "~500MB",
         "ocr": True,
         "notes": "Lightweight OCR, install: pip install doctr",
+        "amd_support": True,
+    },
+    "surya-lite": {
+        "type": "local",
+        "gpu": "optional",
+        "models": "~2GB",
+        "ocr": True,
+        "notes": "Surya OCR only, ~2GB VRAM, install: pip install surya-ocr",
+        "amd_support": True,
+    },
+    "easyocr": {
+        "type": "local",
+        "gpu": "optional",
+        "models": "~300MB",
+        "ocr": True,
+        "notes": "Lightweight 80+ lang, install: pip install easyocr",
         "amd_support": True,
     },
 }
@@ -1411,9 +1429,11 @@ def select_engine(
         return "pymupdf"
 
     for name, check_fn, label in [
+        ("surya-lite", SuryaLiteConverter.is_available, "Surya OCR, ~2GB VRAM"),
         ("nougat", NougatConverter.is_available, "Academic papers, end-to-end"),
         ("mineru", MinerUConverter.is_available, "Great for Chinese, CPU-friendly"),
         ("docling", DoclingConverter.is_available, "Balanced, CPU-friendly"),
+        ("easyocr", EasyOCRConverter.is_available, "Lightweight 80+ lang"),
         ("doctr", DocTRConverter.is_available, "Lightweight OCR"),
     ]:
         if check_fn():
@@ -1567,6 +1587,16 @@ def get_converter(
             print("[Converter] Using DocTR (lightweight OCR)")
             return DocTRConverter(device=device)
 
+    if selected == "surya-lite":
+        if SuryaLiteConverter.is_available():
+            print("[Converter] Using SuryaLite (~2GB VRAM)")
+            return SuryaLiteConverter(langs=langs)
+
+    if selected == "easyocr":
+        if EasyOCRConverter.is_available():
+            print("[Converter] Using EasyOCR (lightweight)")
+            return EasyOCRConverter(langs=langs)
+
     raise ImportError(
         "No PDF converter available. Install one of:\n"
         "  pip install marker-pdf         # Best quality, GPU\n"
@@ -1615,6 +1645,10 @@ def list_available_engines() -> dict[str, dict]:
             available = NougatConverter.is_available()
         elif name == "doctr":
             available = DocTRConverter.is_available()
+        elif name == "surya-lite":
+            available = SuryaLiteConverter.is_available()
+        elif name == "easyocr":
+            available = EasyOCRConverter.is_available()
 
         engines[name] = {**info, "available": available}
 
@@ -1766,6 +1800,120 @@ class DocTRConverter:
     def is_available() -> bool:
         try:
             import doctr
+            return True
+        except ImportError:
+            return False
+
+
+class SuryaLiteConverter:
+    """Surya OCR - lightweight document OCR and layout analysis.
+
+    Type: Local, Free, Offline
+    GPU: Optional (~2GB VRAM)
+    OCR: Yes (detection + recognition + reading order)
+    Install: pip install surya-ocr (already installed with marker-pdf)
+
+    Uses surya directly without marker's heavy model pipeline.
+    About 2GB VRAM usage, quality comparable to marker for text extraction.
+    """
+
+    def __init__(self, langs: str = "en"):
+        self.langs = langs
+        self._loaded = False
+        self._det = None
+        self._rec = None
+        self._layout = None
+
+    def _load(self):
+        if self._loaded:
+            return
+        try:
+            from surya.foundation import FoundationPredictor
+            from surya.recognition import RecognitionPredictor
+            from surya.layout import LayoutPredictor
+            from surya.settings import settings
+
+            self._foundation = FoundationPredictor()
+            self._rec = RecognitionPredictor(self._foundation, langs=[self.langs])
+            self._layout = LayoutPredictor(self._foundation)
+            self._loaded = True
+            print("[SuryaLite] Models loaded (~2GB)")
+        except ImportError:
+            raise ImportError("pip install surya-ocr")
+
+    def convert_file(self, pdf_path: str) -> tuple[str, dict]:
+        import fitz
+        from PIL import Image
+
+        self._load()
+        doc = fitz.open(pdf_path)
+        parts = []
+        for page in doc:
+            pix = page.get_pixmap(dpi=200)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            # Layout detection + reading order
+            layout = self._layout([img])[0]
+            # OCR
+            rec = self._rec([img])[0]
+            # Combine by reading order
+            lines = sorted(rec.text_lines, key=lambda l: l.bbox[1])
+            text = "\n".join(l.text for l in lines if l.text and l.text.strip())
+            if text.strip():
+                parts.append(text.strip())
+        doc.close()
+        return "\n\n".join(parts), {}
+
+    @staticmethod
+    def is_available() -> bool:
+        try:
+            import surya
+            return True
+        except ImportError:
+            return False
+
+
+class EasyOCRConverter:
+    """EasyOCR - lightweight OCR for 80+ languages.
+
+    Type: Local, Free, Offline
+    GPU: Optional (~300MB models)
+    OCR: Yes
+    Install: pip install easyocr
+
+    Very lightweight, works well on CPU and GPU. Good for general purpose OCR.
+    Quality is decent but not as good as marker/surya for complex layouts.
+    """
+
+    def __init__(self, langs: str = "en"):
+        self.langs = langs.split(",") if "," in langs else [langs]
+
+    def convert_file(self, pdf_path: str) -> tuple[str, dict]:
+        try:
+            import easyocr
+        except ImportError:
+            raise ImportError("pip install easyocr")
+
+        import fitz
+        from PIL import Image
+
+        reader = easyocr.Reader(self.langs, gpu=True)
+        doc = fitz.open(pdf_path)
+        parts = []
+        for page in doc:
+            pix = page.get_pixmap(dpi=200)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            import numpy as np
+            results = reader.readtext(np.array(img))
+            text = "\n".join(r[1] for r in results if r[1] and r[1].strip())
+            if text.strip():
+                parts.append(text.strip())
+        doc.close()
+        return "\n\n".join(parts), {}
+
+    @staticmethod
+    def is_available() -> bool:
+        try:
+            import easyocr
             return True
         except ImportError:
             return False
