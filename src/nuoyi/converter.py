@@ -97,6 +97,8 @@ SUPPORTED_ENGINES = [
     "mathpix",
     "mineru-cloud",
     "doc2x",
+    "nougat",
+    "doctr",
 ]
 
 ENGINE_INFO = {
@@ -170,6 +172,22 @@ ENGINE_INFO = {
         "models": "cloud",
         "ocr": True,
         "notes": "Best for formulas, supports split",
+        "amd_support": True,
+    },
+    "nougat": {
+        "type": "local",
+        "gpu": "recommended",
+        "models": "~1.5GB",
+        "ocr": True,
+        "notes": "Academic PDF specialist, install: pip install nougat-ocr",
+        "amd_support": True,
+    },
+    "doctr": {
+        "type": "local",
+        "gpu": "optional",
+        "models": "~500MB",
+        "ocr": True,
+        "notes": "Lightweight OCR, install: pip install doctr",
         "amd_support": True,
     },
 }
@@ -1393,8 +1411,10 @@ def select_engine(
         return "pymupdf"
 
     for name, check_fn, label in [
+        ("nougat", NougatConverter.is_available, "Academic papers, end-to-end"),
         ("mineru", MinerUConverter.is_available, "Great for Chinese, CPU-friendly"),
         ("docling", DoclingConverter.is_available, "Balanced, CPU-friendly"),
+        ("doctr", DocTRConverter.is_available, "Lightweight OCR"),
     ]:
         if check_fn():
             print(f"[Engine] Auto-selected: {name} ({label})")
@@ -1537,6 +1557,16 @@ def get_converter(
             "Get key: https://doc2x.noedgeai.com/"
         )
 
+    if selected == "nougat":
+        if NougatConverter.is_available():
+            print("[Converter] Using Nougat (academic PDF specialist)")
+            return NougatConverter(device=device)
+
+    if selected == "doctr":
+        if DocTRConverter.is_available():
+            print("[Converter] Using DocTR (lightweight OCR)")
+            return DocTRConverter(device=device)
+
     raise ImportError(
         "No PDF converter available. Install one of:\n"
         "  pip install marker-pdf         # Best quality, GPU\n"
@@ -1544,6 +1574,8 @@ def get_converter(
         "  pip install docling            # Balanced, ~1.5GB\n"
         "  pip install pymupdf4llm        # Fastest, no GPU\n"
         "  pip install pdfplumber         # Lightweight\n"
+        "  pip install nougat-ocr         # Academic papers\n"
+        "  pip install doctr              # Lightweight OCR\n"
         "  pip install llama-parse        # Cloud, API key\n"
         "  pip install requests           # For Mathpix/MinerU Cloud/Doc2x\n"
         "\nCloud engines (API key required):\n"
@@ -1579,6 +1611,10 @@ def list_available_engines() -> dict[str, dict]:
             available = MinerUCloudConverter.is_available()
         elif name == "doc2x":
             available = Doc2xConverter.is_available()
+        elif name == "nougat":
+            available = NougatConverter.is_available()
+        elif name == "doctr":
+            available = DocTRConverter.is_available()
 
         engines[name] = {**info, "available": available}
 
@@ -1627,6 +1663,112 @@ def print_engines_info():
     print(
         "           pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/rocm6.2"
     )
+
+
+class NougatConverter:
+    """Nougat - Neural Optical Understanding for Academic Documents.
+
+    Type: Local, Free, Offline
+    GPU: Recommended
+    OCR: Yes (end-to-end, single model for detection+recognition)
+    Models: ~1.5GB
+    Install: pip install nougat-ocr
+
+    Specializes in academic papers (arXiv-style). Single encoder-decoder model
+    that handles both layout detection and text recognition in one pass.
+    """
+
+    def __init__(self, device: str = "auto"):
+        self.device = select_device(device) if device != "auto" else "cpu"
+        self._model = None
+        self._processor = None
+
+    def _load(self):
+        if self._model is None:
+            try:
+                from nougat import NougatModel
+                from nougat.utils.checkpoint import get_checkpoint
+                from transformers import NougatProcessor
+
+                print("[Nougat] Loading model (~1.5GB)...")
+                checkpoint = get_checkpoint()
+                self._processor = NougatProcessor.from_pretrained(checkpoint)
+                self._model = NougatModel.from_pretrained(checkpoint).to(self.device)
+            except ImportError:
+                raise ImportError("pip install nougat-ocr")
+
+    def convert_file(self, pdf_path: str) -> tuple[str, dict]:
+        self._load()
+        import fitz
+
+        doc = fitz.open(pdf_path)
+        parts = []
+        for page in doc:
+            pix = page.get_pixmap(dpi=200)
+            from PIL import Image
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            inputs = self._processor(img, return_tensors="pt").to(self.device)
+            outputs = self._model.generate(**inputs)
+            text = self._processor.batch_decode(outputs, skip_special_tokens=True)[0]
+            if text.strip():
+                parts.append(text.strip())
+        doc.close()
+        return "\n\n".join(parts), {}
+
+    @staticmethod
+    def is_available() -> bool:
+        try:
+            import nougat
+            return True
+        except Exception:
+            return False
+
+
+class DocTRConverter:
+    """DocTR - Document Text Recognition with PyTorch/TensorFlow backends.
+
+    Type: Local, Free, Offline
+    GPU: Optional
+    OCR: Yes (detection + recognition pipeline)
+    Models: ~500MB
+    Install: pip install doctr
+
+    Lightweight OCR engine with both PyTorch and TensorFlow backends.
+    Good for general-purpose document OCR, handles rotated text well.
+    """
+
+    def __init__(self, device: str = "auto"):
+        self.device = select_device(device) if device != "auto" else "cpu"
+
+    def convert_file(self, pdf_path: str) -> tuple[str, dict]:
+        try:
+            from doctr.io import DocumentFile
+            from doctr.models import ocr_predictor
+        except ImportError:
+            raise ImportError("pip install doctr")
+
+        model = ocr_predictor(pretrained=True)
+        if self.device == "cpu":
+            import torch
+            if torch.cuda.is_available():
+                model = ocr_predictor(pretrained=True).cuda()
+
+        doc = DocumentFile.from_pdf(pdf_path)
+        result = model(doc)
+        parts = []
+        for page in result.pages:
+            text = page.render()
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+        return "\n\n".join(parts), {}
+
+    @staticmethod
+    def is_available() -> bool:
+        try:
+            import doctr
+            return True
+        except ImportError:
+            return False
 
 
 class DocxConverter:

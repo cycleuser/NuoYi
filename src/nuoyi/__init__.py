@@ -87,6 +87,7 @@ from .api import (
 )
 from .converter import (
     Doc2xConverter,
+    DocTRConverter,
     DoclingConverter,
     DocxConverter,
     LlamaParseConverter,
@@ -94,6 +95,7 @@ from .converter import (
     MathpixConverter,
     MinerUCloudConverter,
     MinerUConverter,
+    NougatConverter,
     PDFPlumberConverter,
     PyMuPDFConverter,
     aggregate_markdown,
@@ -154,6 +156,8 @@ __all__ = [
     "MathpixConverter",
     "MinerUCloudConverter",
     "Doc2xConverter",
+    "NougatConverter",
+    "DocTRConverter",
     "DocxConverter",
     "get_converter",
     "split_pdf",
