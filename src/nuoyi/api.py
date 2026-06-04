@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .utils import _is_oom_error_message, _is_cuda_oom_error, clear_gpu_memory
+
 _converter_cache: dict = {}
 _pending_tasks: list[dict] = []
 
@@ -630,7 +632,7 @@ def convert_directory(
                 print(f"[Batch] ✓ {filename}")
             else:
                 error_msg = r.error or "Unknown error"
-                if "CUDA OOM" in error_msg or "CUDA out of memory" in error_msg:
+                if _is_oom_error_message(error_msg):
                     print(f"[Batch] ✗ {filename}: CUDA OOM")
 
                     if on_oom == "defer":
@@ -657,19 +659,9 @@ def convert_directory(
                     else:
                         print("[Batch] Attempting CPU fallback...")
 
-                        try:
-                            import gc
-
-                            import torch
-
-                            clear_converter_cache()
-                            gc.collect()
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                                torch.cuda.synchronize()
-                                print("[Batch] GPU memory cleared")
-                        except Exception:
-                            pass
+                        clear_converter_cache()
+                        clear_gpu_memory()
+                        print("[Batch] GPU memory cleared")
 
                         try:
                             r_cpu = convert_file(
@@ -679,7 +671,7 @@ def convert_directory(
                                 page_range=page_range,
                                 langs=langs,
                                 device="cpu",
-                                low_vram=False,
+                                low_vram=low_vram,
                                 use_cache=False,
                             )
                             if r_cpu.success:
@@ -704,7 +696,7 @@ def convert_directory(
 
         except Exception as e:
             error_msg = str(e)
-            if "CUDA OOM" in error_msg or "CUDA out of memory" in error_msg:
+            if _is_cuda_oom_error(e):
                 print(f"[Batch] ✗ {filename}: CUDA OOM")
 
                 if on_oom == "defer":
@@ -731,19 +723,9 @@ def convert_directory(
                 else:
                     print("[Batch] Attempting CPU fallback...")
 
-                    try:
-                        import gc
-
-                        import torch
-
-                        clear_converter_cache()
-                        gc.collect()
-                        if torch.cuda.is_available():
-                            torch.cuda.empty_cache()
-                            torch.cuda.synchronize()
-                            print("[Batch] GPU memory cleared")
-                    except Exception:
-                        pass
+                    clear_converter_cache()
+                    clear_gpu_memory()
+                    print("[Batch] GPU memory cleared")
 
                     try:
                         r = convert_file(
@@ -753,7 +735,7 @@ def convert_directory(
                             page_range=page_range,
                             langs=langs,
                             device="cpu",
-                            low_vram=False,
+                            low_vram=low_vram,
                             use_cache=False,
                         )
                         if r.success:
@@ -787,23 +769,12 @@ def convert_directory(
         )
 
         if i % 5 == 0:
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    torch.cuda.synchronize()
-            except Exception:
-                pass
+            clear_gpu_memory()
 
         if i % 10 == 0:
-            try:
-                import gc
+            import gc
 
-                gc.collect()
-                clear_converter_cache()
-            except Exception:
-                pass
+            gc.collect()
 
     clear_converter_cache()
 

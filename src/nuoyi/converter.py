@@ -55,6 +55,7 @@ from docx import Document
 from .utils import (
     DEFAULT_LANGS,
     LOW_VRAM_THRESHOLD_GB,
+    _is_cuda_oom_error,
     clean_markdown,
     clear_gpu_memory,
     enable_low_vram_mode,
@@ -659,6 +660,9 @@ class MarkerPDFConverter:
         if self.low_vram:
             self._setup_low_vram_optimizations()
 
+        self.converter = None
+        self.artifact_dict = None
+
         config = {"output_format": "markdown"}
         if force_ocr:
             config["force_ocr"] = True
@@ -700,8 +704,7 @@ class MarkerPDFConverter:
             print(f"Models loaded successfully on {self.device.upper()}.")
 
         except RuntimeError as e:
-            error_msg = str(e).lower()
-            if "cuda" in error_msg and ("out of memory" in error_msg or "oom" in error_msg):
+            if _is_cuda_oom_error(e):
                 if self.device != "cpu" and self.allow_fallback:
                     print("\n[WARNING] CUDA out of memory! Falling back to CPU...")
                     print("[WARNING] This will be slower but avoids memory issues.\n")
@@ -744,13 +747,15 @@ class MarkerPDFConverter:
         clear_gpu_memory()
 
         try:
-            rendered = self.converter(pdf_path)
+            import torch
+
+            with torch.inference_mode():
+                rendered = self.converter(pdf_path)
             text, _, images = text_from_rendered(rendered)
             return clean_markdown(text), images or {}
 
         except RuntimeError as e:
-            error_msg = str(e).lower()
-            if "cuda" in error_msg and ("out of memory" in error_msg or "oom" in error_msg):
+            if _is_cuda_oom_error(e):
                 if self.device != "cpu" and self.allow_fallback:
                     print("\n[WARNING] CUDA OOM during conversion! Retrying on CPU...")
 
@@ -787,7 +792,10 @@ class MarkerPDFConverter:
 
                     clear_gpu_memory()
 
-                    rendered = self.converter(pdf_path)
+                    import torch
+
+                    with torch.inference_mode():
+                        rendered = self.converter(pdf_path)
                     text, _, images = text_from_rendered(rendered)
                     return clean_markdown(text), images or {}
                 raise
@@ -803,6 +811,24 @@ class MarkerPDFConverter:
             return count
         except Exception:
             return 0
+
+    def cleanup(self):
+        """Release GPU memory held by marker models.
+
+        Should be called when the converter is no longer needed,
+        especially before loading a different engine.
+        """
+        import gc
+
+        if self.converter is not None:
+            del self.converter
+            self.converter = None
+        if self.artifact_dict is not None:
+            del self.artifact_dict
+            self.artifact_dict = None
+
+        gc.collect()
+        clear_gpu_memory()
 
     @staticmethod
     def is_available() -> bool:
@@ -1387,7 +1413,7 @@ def select_engine(
     """Auto-select best available engine based on resources and availability.
 
     Selection priority:
-    1. GPU available (>=4GB): marker (best quality)
+    1. GPU available (>=6GB): marker (best quality)
     2. CPU with mineru: mineru (good Chinese support, works on CPU)
     3. CPU with docling: docling (balanced, works on CPU)
     4. Fallback: pymupdf (fastest, no models needed)
@@ -1396,7 +1422,7 @@ def select_engine(
     If pdf_path is provided, uses complexity estimation:
     - Simple (digital text, few images): prefers pymupdf for speed
     - Moderate: prefers mineru/docling for balanced quality
-    - Complex (scanned, heavy OCR): prefers marker (if GPU) or mineru
+    - Complex (scanned, heavy OCR): prefers marker (if GPU>=6GB) or mineru
     """
     if engine != "auto":
         return engine
@@ -1411,7 +1437,7 @@ def select_engine(
             if total <= 0 and is_rocm_available():
                 total, _ = get_rocm_memory_info()
 
-            if total >= 4 and MarkerPDFConverter.is_available():
+            if total >= LOW_VRAM_THRESHOLD_GB and MarkerPDFConverter.is_available():
                 if complexity == "simple" and PyMuPDFConverter.is_available():
                     print("[Engine] Auto-selected: pymupdf (simple digital PDF, fastest)")
                     return "pymupdf"
@@ -1735,14 +1761,18 @@ class NougatConverter:
         self._load()
         import fitz
 
+        import torch
+
         doc = fitz.open(pdf_path)
         parts = []
         for page in doc:
             pix = page.get_pixmap(dpi=200)
             from PIL import Image
+
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             inputs = self._processor(img, return_tensors="pt").to(self.device)
-            outputs = self._model.generate(**inputs)
+            with torch.inference_mode():
+                outputs = self._model.generate(**inputs)
             text = self._processor.batch_decode(outputs, skip_special_tokens=True)[0]
             if text.strip():
                 parts.append(text.strip())
@@ -1846,13 +1876,16 @@ class SuryaLiteConverter:
         from PIL import Image
 
         self._load()
+        import torch
+
         doc = fitz.open(pdf_path)
         parts = []
         for page in doc:
             pix = page.get_pixmap(dpi=200)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             # OCR with detection
-            rec = self._rec([img], det_predictor=self._det)[0]
+            with torch.inference_mode():
+                rec = self._rec([img], det_predictor=self._det)[0]
             lines = sorted(rec.text_lines, key=lambda l: l.bbox[1] if hasattr(l, 'bbox') else 0)
             text = "\n".join(l.text for l in lines if l.text and l.text.strip())
             if text.strip():

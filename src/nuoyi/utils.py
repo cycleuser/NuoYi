@@ -382,8 +382,6 @@ def clear_gpu_memory():
     """Release unused GPU memory for all backends."""
     import gc
 
-    gc.collect()
-
     try:
         import torch
 
@@ -397,6 +395,12 @@ def clear_gpu_memory():
 
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             torch.mps.empty_cache()
+    except Exception:
+        pass
+
+    # DirectML: force release via gc (torch_directml has no empty_cache API)
+    try:
+        import torch_directml  # noqa: F811
     except Exception:
         pass
 
@@ -454,6 +458,36 @@ def check_memory_available(required_mb: float) -> tuple[bool, float]:
 
     except Exception:
         return (True, float("inf"))
+
+
+def _is_cuda_oom_error(error: Exception) -> bool:
+    """Check if an exception is a CUDA/ROCm/DirectML out-of-memory error.
+
+    Uses torch.cuda.OutOfMemoryError (PyTorch 2.0+) with fallback
+    to string matching for older PyTorch versions.
+    """
+    try:
+        import torch
+
+        if hasattr(torch.cuda, "OutOfMemoryError") and isinstance(
+            error, torch.cuda.OutOfMemoryError
+        ):
+            return True
+    except Exception:
+        pass
+
+    error_msg = str(error).lower()
+    return ("cuda" in error_msg or "hip" in error_msg) and (
+        "out of memory" in error_msg or "oom" in error_msg
+    )
+
+
+def _is_oom_error_message(msg: str) -> bool:
+    """Check if an error message string indicates GPU out-of-memory."""
+    msg_lower = msg.lower()
+    return ("cuda" in msg_lower or "hip" in msg_lower or "directml" in msg_lower) and (
+        "out of memory" in msg_lower or "oom" in msg_lower
+    )
 
 
 def get_current_memory_usage() -> dict:
